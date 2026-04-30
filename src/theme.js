@@ -1,0 +1,17 @@
+export const T = {
+  bg:       "#F5EFE0",
+  paper:    "#FBF6E9",
+  panel:    "#FFFCF2",
+  ink:      "#1F2A1B",
+  inkDim:   "rgba(31,42,27,0.62)",
+  inkMute:  "rgba(31,42,27,0.38)",
+  border:   "rgba(31,42,27,0.10)",
+  borderHi: "rgba(31,42,27,0.22)",
+  green:    "#3E5C30",
+  greenLi:  "#6B8E4E",
+  terra:    "#C97A5A",
+  ochre:    "#D9A441",
+  good:     "#6B8E4E",
+  bad:      "#C9543A",
+  warn:     "#D9A441",
+};

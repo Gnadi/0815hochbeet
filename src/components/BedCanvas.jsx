@@ -4,7 +4,7 @@ import { PlantTile } from './PlantTile';
 import { plantById } from '../data/plants';
 
 export function BedCanvas({ bed, cellSize=64, showSun=false, showConflict=true, draggingPlant, onCellPlace, onCellRemove, mobile=false }) {
-  const { shape, cells, cellStatus, sunMap, shapeEditing, setMaskCell, customMask, isFreeform } = bed;
+  const { shape, cells, cellStatus, sunMap, shapeEditing, setMaskCell, customMask, isFreeform, bedWidth, bedDepth } = bed;
   const w=shape.w, h=shape.h;
   const editing = shapeEditing && isFreeform;
   const [paintMode, setPaintMode] = useState(null);
@@ -38,7 +38,7 @@ export function BedCanvas({ bed, cellSize=64, showSun=false, showConflict=true, 
       backgroundSize:'6px 6px,9px 9px',
     }}>
       <div style={{position:'absolute',top:-14,left:'50%',transform:'translateX(-50%)',padding:'4px 14px',background:editing?T.terra:T.green,color:'#fff',borderRadius:999,fontFamily:'JetBrains Mono,monospace',fontSize:10,letterSpacing:'0.1em',textTransform:'uppercase',whiteSpace:'nowrap'}}>
-        {editing?'Form bearbeiten':`${shape.de} · ${dim.w}×${dim.h} cm`}
+        {editing?'Form bearbeiten':`${shape.de} · ${bedWidth&&bedDepth?`${bedWidth}×${bedDepth}`:`${dim.w}×${dim.h}`} cm`}
       </div>
       <div style={{display:'grid',gridTemplateColumns:`repeat(${w},${cellSize}px)`,gridTemplateRows:`repeat(${h},${cellSize}px)`,gap:3}}>
         {Array.from({length:h}).map((_,y)=>

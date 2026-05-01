@@ -28,9 +28,13 @@ export default function BedPlanner() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const mobile = useBreakpoint();
-  const [initialData, setInitialData] = useState(null);
-  const [loaded, setLoaded] = useState(false);
-  const bed = useBed(initialData?.shapeId || 'rect');
+  const [initialData, setInitialData] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`hb_bed_${bedId}`) || 'null'); } catch { return null; }
+  });
+  const [loaded, setLoaded] = useState(() => {
+    try { return !!localStorage.getItem(`hb_bed_${bedId}`); } catch { return false; }
+  });
+  const bed = useBed(initialData?.shapeId || 'rect', initialData?.width, initialData?.depth);
   const [draggingPlant, setDraggingPlant] = useState(null);
   const [showSun, setShowSun] = useState(false);
   const [activeTab, setActiveTab] = useState('plants');
@@ -44,22 +48,20 @@ export default function BedPlanner() {
 
   // Load bed data
   useEffect(() => {
-    const local = JSON.parse(localStorage.getItem(`hb_bed_${bedId}`) || 'null');
-    if (local) {
-      setInitialData(local);
-      setBedName(local.name || 'Mein Hochbeet');
-      setNotes(local.notes || '');
-      setLoaded(true);
+    if (initialData) {
+      setBedName(initialData.name || 'Mein Hochbeet');
+      setNotes(initialData.notes || '');
     }
     if (user && db) {
       const unsub = onSnapshot(doc(db,'users',user.uid,'beds',bedId), snap => {
         if (snap.exists()) {
           const d = snap.data();
-          if (!local) { setInitialData(d); setBedName(d.name||'Mein Hochbeet'); setNotes(d.notes||''); setLoaded(true); }
+          if (!initialData) { setInitialData(d); setBedName(d.name||'Mein Hochbeet'); setNotes(d.notes||''); setLoaded(true); }
         }
       }, ()=>{});
       return unsub;
     }
+  // eslint-disable-next-line
   }, [bedId, user]);
 
   // Hydrate all season cells from saved data once

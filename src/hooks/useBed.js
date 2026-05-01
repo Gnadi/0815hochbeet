@@ -3,7 +3,7 @@ import { PLANTS, SHAPES, pairScore, plantById, defaultFreeformMask } from '../da
 
 const EMPTY_SC = { spring:{}, summer:{}, autumn:{}, winter:{} };
 
-export function useBed(initialShapeId = 'rect') {
+export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null) {
   const [shapeId, setShapeId] = useState(initialShapeId);
   const [customMask, setCustomMask] = useState(() => defaultFreeformMask());
   // Each season has its own independent cell map
@@ -17,18 +17,25 @@ export function useBed(initialShapeId = 'rect') {
   // Active season's cells — derived, not state
   const cells = seasonCells[season] || {};
 
-  const baseShape = SHAPES[shapeId];
+  const baseShape = useMemo(() => {
+    const s = SHAPES[shapeId];
+    if (s.id === 'rect' && bedWidth > 0 && bedDepth > 0) {
+      return { ...s, w: Math.max(1, Math.round(bedWidth / 25)), h: Math.max(1, Math.round(bedDepth / 25)) };
+    }
+    return s;
+  }, [shapeId, bedWidth, bedDepth]);
+
   const shape = useMemo(() => {
     if (baseShape.preset) return { ...baseShape, mask: () => true };
     return { ...baseShape, mask: (x,y) => !!customMask[`${x},${y}`] };
-  }, [shapeId, customMask]);
+  }, [baseShape, customMask]);
 
   // Shape change resets ALL seasons (shape is shared across seasons)
   useEffect(() => {
     setSeasonCells(EMPTY_SC);
     setHistory([]); setFuture([]);
     const sun = {};
-    const s = SHAPES[shapeId];
+    const s = baseShape;
     const maskFn = s.preset ? s.mask : (x,y) => !!customMask[`${x},${y}`];
     for (let y=0;y<s.h;y++) for (let x=0;x<s.w;x++) {
       if (!maskFn(x,y)) continue;
@@ -38,7 +45,7 @@ export function useBed(initialShapeId = 'rect') {
     setSunMap(sun);
     if (shapeId !== 'freeform') setShapeEditing(false);
   // eslint-disable-next-line
-  }, [shapeId]);
+  }, [shapeId, baseShape]);
 
   // Snapshots store the full seasonCells so undo/redo works across season switches
   function snapshot() {
@@ -186,5 +193,6 @@ export function useBed(initialShapeId = 'rect') {
     shapeEditing,setShapeEditing,
     toggleMaskCell,setMaskCell,clearMask,resetMask,
     customMask,
+    bedWidth, bedDepth,
   };
 }

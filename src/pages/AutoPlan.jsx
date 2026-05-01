@@ -5,7 +5,7 @@ import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { T } from '../theme';
-import { PLANTS, plantById, pairScore } from '../data/plants';
+import { PLANTS, plantById } from '../data/plants';
 import { PlantTile } from '../components/PlantTile';
 import { Btn } from '../components/Btn';
 import { Chip } from '../components/Chip';
@@ -21,95 +21,54 @@ function saveBedLocally(bedId, data) {
   localStorage.setItem('hb_beds', JSON.stringify(ids));
 }
 
-// ─── Optimized greedy companion-aware bed planner ───────────────────────────
+// ─── Per-plant spacing planner ────────────────────────────────────────────────
+// Each plant occupies spacing_cm × spacing_cm.
+// plants_per_row = floor(bedWidth / spacing_cm)
+// rows           = floor(bedDepth / spacing_cm)
+// total          = plants_per_row × rows
 function generatePlan(goal, picks, widthCm, depthCm) {
-  const cols = Math.max(1, Math.floor(widthCm / 75));
-  const rows = Math.max(1, Math.floor(depthCm / 75));
   const available = picks.map(id => plantById(id)).filter(Boolean);
   if (!available.length) return null;
 
-  function goalScore(p) {
-    if (goal === 'yield')  return p.yield * 3;
-    if (goal === 'easy')   return p.water === 'low' ? 3 : p.water === 'med' ? 2 : 1;
-    if (goal === 'family') return p.yield + (p.water === 'low' ? 1 : 0) + 0.5;
-    return 1;
-  }
+  // Per-plant fit calculation
+  const plantings = available.map(plant => {
+    const fitCols = Math.max(0, Math.floor(widthCm / plant.spacing_cm));
+    const fitRows = Math.max(0, Math.floor(depthCm / plant.spacing_cm));
+    return { plant, fitCols, fitRows, count: fitCols * fitRows };
+  }).filter(p => p.count > 0);
 
-  const scored = available.map(p => ({ ...p, gs: goalScore(p) })).sort((a,b) => b.gs - a.gs);
-  const grid = Array.from({length:rows}, () => Array(cols).fill(null));
+  if (!plantings.length) return null;
+
+  // Sort by goal preference
+  if (goal === 'yield') plantings.sort((a, b) => b.plant.yield - a.plant.yield);
+  if (goal === 'easy')  plantings.sort((a, b) => (a.plant.water === 'low' ? 0 : 1) - (b.plant.water === 'low' ? 0 : 1));
+
+  // Visual cell grid (8×4 rect shape): divide into equal vertical strips per plant
+  const GRID_W = 8, GRID_H = 4;
   const cells = {};
-  const placedOnce = new Set();
-
-  function nbrs(x, y) {
-    return [[x-1,y],[x+1,y],[x,y-1],[x,y+1]].map(([nx,ny]) => grid[ny]?.[nx]).filter(Boolean);
-  }
-
-  // Pass 1: greedy fill
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      const neighbors = nbrs(x, y);
-      const candidates = scored.map(p => {
-        const companionScore = neighbors.reduce((s,n) => s + pairScore(p.id, n), 0);
-        const hasBad = neighbors.some(n => pairScore(p.id, n) < 0);
-        const firstBonus = placedOnce.has(p.id) ? 0 : 500;
-        return { p, score: p.gs * 2 + companionScore * 4 + firstBonus, hasBad };
-      }).filter(c => !c.hasBad).sort((a,b) => b.score - a.score);
-
-      const chosen = candidates[0]?.p ?? scored.reduce((best, cur) => {
-        const bs = neighbors.reduce((s,n)=>s+pairScore(best.id,n),0);
-        const cs = neighbors.reduce((s,n)=>s+pairScore(cur.id,n),0);
-        return cs > bs ? cur : best;
-      }, scored[0]);
-
-      grid[y][x] = chosen.id;
-      cells[`${x},${y}`] = chosen.id;
-      placedOnce.add(chosen.id);
-    }
-  }
-
-  // Pass 2: rescue unplaced plants
-  const allKeys = Object.keys(cells);
-  for (const p of scored) {
-    if (placedOnce.has(p.id)) continue;
-    let bestKey = allKeys[0], bestScore = -Infinity;
-    for (const key of allKeys) {
-      const [kx, ky] = key.split(',').map(Number);
-      const score = [[kx-1,ky],[kx+1,ky],[kx,ky-1],[kx,ky+1]]
-        .map(([nx,ny]) => cells[`${nx},${ny}`]).filter(Boolean)
-        .reduce((s, n) => s + pairScore(p.id, n), 0);
-      if (score > bestScore) { bestScore = score; bestKey = key; }
-    }
-    const [bx, by] = bestKey.split(',').map(Number);
-    grid[by][bx] = p.id;
-    cells[bestKey] = p.id;
-    placedOnce.add(p.id);
-  }
-
-  // Pass 3: local swap — resolve remaining conflicts
-  for (let iter = 0; iter < 3; iter++) {
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
-        const key = `${x},${y}`;
-        const pid = cells[key];
-        const neighbors = [[x-1,y],[x+1,y],[x,y-1],[x,y+1]].map(([nx,ny])=>cells[`${nx},${ny}`]).filter(Boolean);
-        if (!neighbors.some(n => pairScore(pid, n) < 0)) continue;
-        const better = scored.find(p => !neighbors.some(n => pairScore(p.id, n) < 0) && p.id !== pid);
-        if (better) { grid[y][x] = better.id; cells[key] = better.id; }
+  plantings.forEach(({ plant }, idx) => {
+    const x0 = Math.round((idx / plantings.length) * GRID_W);
+    const x1 = Math.round(((idx + 1) / plantings.length) * GRID_W);
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = x0; x < x1; x++) {
+        cells[`${x},${y}`] = plant.id;
       }
     }
-  }
+  });
 
-  const yieldKg = Object.values(cells).reduce((s,pid)=>s+(plantById(pid)?.yield||0),0);
-  const careHours = goal==='easy'?1.5:goal==='yield'?3:2;
-  const usedPlants = [...new Set(Object.values(cells))].map(plantById).filter(Boolean);
-  const names = usedPlants.slice(0,3).map(p=>p.de).join(', ');
-  const desc = goal==='yield'
+  const totalCount = plantings.reduce((s, p) => s + p.count, 0);
+  const yieldKg = plantings.reduce((s, { plant, count }) => s + plant.yield * count, 0);
+  const careHours = goal === 'easy' ? 1.5 : goal === 'yield' ? 3 : 2;
+  const usedPlants = plantings.map(p => p.plant);
+  const names = usedPlants.slice(0, 3).map(p => p.de).join(', ');
+
+  const desc = goal === 'yield'
     ? `Ertragsoptimiert: ${names} und mehr. Volle Nutzung aller Sonnenstunden.`
-    : goal==='easy'
+    : goal === 'easy'
     ? `Pflegeleicht: Trockenheitsverträgliche Pflanzen wie ${names}. Wenig Pflege nötig.`
     : `Familienfreundlich: Abwechslungsreiche Ernte mit ${names}. Ideal für Kinder.`;
 
-  return { cells, grid, cols, rows, yieldKg, careHours, description:desc, usedPlants };
+  return { cells, cols: GRID_W, rows: GRID_H, plantings, totalCount, yieldKg, careHours, description: desc, usedPlants };
 }
 
 const GOALS = [
@@ -166,7 +125,7 @@ export default function AutoPlan() {
           Wie groß ist dein <em style={{ color:T.green, fontStyle:'italic' }}>Beet</em>?
         </h2>
         <p style={{ fontSize:13, color:T.inkDim, marginBottom:28, lineHeight:1.6 }}>
-          Gib die Maße deines Hochbeets ein. Jede Pflanze braucht 75 × 75 cm.
+          Gib die Maße deines Hochbeets ein. Jede Pflanze nutzt ihren eigenen Abstandswert.
         </p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:16 }}>
           <div>
@@ -179,10 +138,12 @@ export default function AutoPlan() {
           </div>
         </div>
         <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:12, padding:'12px 16px', display:'flex', alignItems:'center', gap:10 }}>
-          <span style={{ ...MONO, fontSize:22, color:T.green, fontWeight:700 }}>{Math.max(1,Math.floor(+widthCm/75)) * Math.max(1,Math.floor(+depthCm/75))}</span>
+          <span style={{ ...MONO, fontSize:22, color:T.green, fontWeight:700 }}>
+            {((+widthCm * +depthCm) / 10000).toFixed(2)}
+          </span>
           <div>
-            <div style={{ fontSize:12, fontWeight:600, color:T.ink }}>Felder</div>
-            <div style={{ fontSize:11, color:T.inkMute }}>{Math.max(1,Math.floor(+widthCm/75))} × {Math.max(1,Math.floor(+depthCm/75))} Raster</div>
+            <div style={{ fontSize:12, fontWeight:600, color:T.ink }}>m² Beetfläche</div>
+            <div style={{ fontSize:11, color:T.inkMute }}>{+widthCm} × {+depthCm} cm</div>
           </div>
         </div>
       </div>
@@ -230,20 +191,42 @@ export default function AutoPlan() {
         <h2 style={{ fontFamily:'Fraunces,serif', fontSize:28, margin:'6px 0 16px', fontWeight:500, fontStyle:'italic', color:T.green }}>
           {goal==='yield'?'Ertrags-Plan':goal==='easy'?'Pflegeleicht-Plan':'Familien-Plan'}
         </h2>
+
+        {/* Visual grid preview */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(8,1fr)', gap:3, marginBottom:18, padding:10, background:T.bg, borderRadius:12 }}>
-          {Array.from({length:Math.min(plan.cols*plan.rows,32)}).map((_,k)=>{
-            const pid = plan.cells[`${k%plan.cols},${Math.floor(k/plan.cols)}`];
+          {Array.from({length: plan.cols * plan.rows}).map((_,k) => {
+            const pid = plan.cells[`${k % plan.cols},${Math.floor(k / plan.cols)}`];
             const p = pid ? plantById(pid) : null;
             return p
               ? <div key={k} style={{ height:32, background:`oklch(0.62 0.1 ${p.hue})`, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Fraunces,serif', fontStyle:'italic', fontSize:13, color:'#fff' }}>{p.glyph[0]}</div>
               : <div key={k} style={{ height:32, background:'rgba(31,42,27,0.06)', borderRadius:4 }} />;
           })}
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
+
+        {/* Summary chips */}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
           <Chip style={{ justifyContent:'center' }}>Ertrag <strong style={{ ...MONO, color:T.green, marginLeft:4 }}>~{plan.yieldKg.toFixed(1)} kg</strong></Chip>
           <Chip style={{ justifyContent:'center' }}>Pflege <strong style={{ ...MONO, color:T.green, marginLeft:4 }}>{plan.careHours}h/Wo</strong></Chip>
         </div>
-        <div style={{ fontSize:12, color:T.inkDim, lineHeight:1.6, marginBottom:20 }}>{plan.description}</div>
+
+        {/* Per-plant breakdown */}
+        <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:12, overflow:'hidden', marginBottom:16 }}>
+          {plan.plantings.map(({ plant, fitCols, fitRows, count }, idx) => (
+            <div key={plant.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderBottom: idx < plan.plantings.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+              <PlantTile plant={plant} size={28} showLabel={false} draggable={false} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:T.ink }}>{plant.de}</div>
+                <div style={{ fontSize:10, color:T.inkMute, ...MONO }}>{plant.spacing_cm} cm Abstand</div>
+              </div>
+              <div style={{ textAlign:'right', flexShrink:0 }}>
+                <div style={{ ...MONO, fontSize:14, fontWeight:700, color:T.green }}>{count}×</div>
+                <div style={{ fontSize:10, color:T.inkMute }}>{fitCols}×{fitRows}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ fontSize:12, color:T.inkDim, lineHeight:1.6 }}>{plan.description}</div>
       </div>
     );
   };

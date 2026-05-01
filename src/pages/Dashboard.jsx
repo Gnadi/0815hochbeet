@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -10,14 +10,28 @@ import { plantById, SHAPES } from '../data/plants';
 import { TabBar } from '../components/TabBar';
 import { AuthModal } from '../components/AuthModal';
 import { Btn, TrashIcon } from '../components/Btn';
+import { useTodos } from '../hooks/useTodos';
 
 const MONTH_NAMES = ['JAN','FEB','MÄR','APR','MAI','JUN','JUL','AUG','SEP','OKT','NOV','DEZ'];
-const TASKS = [
-  { day:'MO', task:'Tomaten ausgeizen', bed:'Mein Hochbeet' },
-  { day:'MI', task:'Bewässern (alle Beete)', bed:'' },
-  { day:'FR', task:'Salat ernten', bed:'Kräuterbeet' },
-  { day:'SO', task:'Mulchen', bed:'Eckbeet Süd' },
-];
+const DE_DAYS = ['SO','MO','DI','MI','DO','FR','SA'];
+
+function toDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function getThisWeekRange() {
+  const today = new Date();
+  const dow = today.getDay();
+  const diff = dow === 0 ? -6 : 1 - dow;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + diff);
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return { monday, sunday };
+}
+
 const TIMELINE = [
   { plant:'carrot',  start:2, end:9  },
   { plant:'tomato',  start:4, end:9  },
@@ -131,6 +145,17 @@ export default function Dashboard() {
   const [beds, setBeds] = useState([]);
   const [showAuth, setShowAuth] = useState(false);
   const currentMonth = new Date().getMonth();
+  const { todos, toggleTodo } = useTodos();
+
+  const weekTodos = useMemo(() => {
+    const { monday, sunday } = getThisWeekRange();
+    return todos
+      .filter(t => {
+        const d = new Date(t.date + 'T00:00:00');
+        return d >= monday && d <= sunday;
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [todos]);
 
   const dateStr = new Intl.DateTimeFormat('de-DE', { weekday:'short', day:'2-digit', month:'long' }).format(new Date());
 
@@ -187,15 +212,28 @@ export default function Dashboard() {
         </Btn>
       </div>
 
-      <div style={{ padding:'0 20px 8px' }}><div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Diese Woche</div></div>
+      <div style={{ padding:'0 20px 8px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Diese Woche</div>
+        <button onClick={()=>navigate('/calendar')} style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:600, padding:0 }}>Kalender →</button>
+      </div>
       <div style={{ padding:'0 16px 16px', display:'flex', flexDirection:'column', gap:8 }}>
-        {TASKS.map((t,i) => (
-          <div key={i} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:'12px 14px', display:'flex', alignItems:'center', gap:12 }}>
-            <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:9, color:T.terra, fontWeight:600, width:24 }}>{t.day}</div>
-            <div style={{ flex:1, fontSize:13, fontWeight:500 }}>{t.task}</div>
-            {t.bed && <div style={{ fontSize:10, color:T.inkMute }}>{t.bed}</div>}
+        {weekTodos.length === 0 ? (
+          <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:'12px 14px', display:'flex', alignItems:'center', gap:12 }}>
+            <div style={{ fontSize:13, color:T.inkMute }}>Keine Aufgaben diese Woche.</div>
           </div>
-        ))}
+        ) : weekTodos.map(t => {
+          const d = new Date(t.date + 'T00:00:00');
+          const dayLabel = DE_DAYS[d.getDay()];
+          return (
+            <div key={t.id} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:'12px 14px', display:'flex', alignItems:'center', gap:12, opacity:t.done?0.5:1 }}>
+              <button onClick={()=>toggleTodo(t.id)} style={{ width:16, height:16, borderRadius:3, border:`1.5px solid ${t.done?T.green:T.borderHi}`, background:t.done?T.green:'transparent', flexShrink:0, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', padding:0 }}>
+                {t.done && <span style={{ color:'#fff', fontSize:9, fontWeight:700, lineHeight:1 }}>✓</span>}
+              </button>
+              <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:9, color:T.terra, fontWeight:600, width:22, flexShrink:0 }}>{dayLabel}</div>
+              <div style={{ flex:1, fontSize:13, fontWeight:500, textDecoration:t.done?'line-through':'none' }}>{t.title}</div>
+            </div>
+          );
+        })}
       </div>
 
       <div style={{ padding:'8px 20px' }}><div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Beete · {beds.length}</div></div>
@@ -272,15 +310,30 @@ export default function Dashboard() {
           </div>
 
           {/* Weekly tasks */}
-          <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute, marginBottom:12 }}>Diese Woche · This week</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12 }}>
-            {TASKS.map((t,i) => (
-              <div key={i} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:16, boxShadow:'0 1px 0 rgba(31,42,27,0.04)' }}>
-                <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.terra, marginBottom:6, fontWeight:600 }}>{t.day}</div>
-                <div style={{ fontSize:13, fontWeight:500 }}>{t.task}</div>
-                {t.bed && <div style={{ fontSize:11, color:T.inkMute, marginTop:2 }}>{t.bed}</div>}
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+            <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Diese Woche · This week</div>
+            <button onClick={()=>navigate('/calendar')} style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:600, padding:0 }}>Kalender →</button>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:weekTodos.length>0?'repeat(auto-fill,minmax(200px,1fr))':'1fr', gap:12 }}>
+            {weekTodos.length === 0 ? (
+              <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:16, boxShadow:'0 1px 0 rgba(31,42,27,0.04)', color:T.inkMute, fontSize:13 }}>
+                Keine Aufgaben diese Woche.
               </div>
-            ))}
+            ) : weekTodos.map(t => {
+              const d = new Date(t.date + 'T00:00:00');
+              const dayLabel = DE_DAYS[d.getDay()];
+              return (
+                <div key={t.id} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:16, boxShadow:'0 1px 0 rgba(31,42,27,0.04)', opacity:t.done?0.5:1 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
+                    <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.terra, fontWeight:600 }}>{dayLabel}</div>
+                    <button onClick={()=>toggleTodo(t.id)} style={{ width:16, height:16, borderRadius:3, border:`1.5px solid ${t.done?T.green:T.borderHi}`, background:t.done?T.green:'transparent', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, padding:0 }}>
+                      {t.done && <span style={{ color:'#fff', fontSize:9, fontWeight:700, lineHeight:1 }}>✓</span>}
+                    </button>
+                  </div>
+                  <div style={{ fontSize:13, fontWeight:500, textDecoration:t.done?'line-through':'none' }}>{t.title}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

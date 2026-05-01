@@ -147,7 +147,7 @@ export default function BedPlanner() {
       </div>
 
       {/* Canvas */}
-      <div style={{ display:'flex', justifyContent:'center', padding:'0 16px' }}>
+      <div style={{ display:'flex', justifyContent:'center', padding:'20px 16px 0' }}>
         <BedCanvas bed={bed} cellSize={cellSize} showSun={false} showConflict={true} draggingPlant={selectedPlant} onCellPlace={(x,y,p)=>{bed.place(x,y,p||selectedPlant);}} onCellRemove={bed.remove} mobile />
       </div>
 

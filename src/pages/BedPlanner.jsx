@@ -147,7 +147,7 @@ export default function BedPlanner() {
       </div>
 
       {/* Canvas */}
-      <div style={{ display:'flex', justifyContent:'center', padding:'0 16px' }}>
+      <div style={{ display:'flex', justifyContent:'center', padding:'20px 16px 0' }}>
         <BedCanvas bed={bed} cellSize={cellSize} showSun={false} showConflict={true} draggingPlant={selectedPlant} onCellPlace={(x,y,p)=>{bed.place(x,y,p||selectedPlant);}} onCellRemove={bed.remove} mobile />
       </div>
 
@@ -175,6 +175,41 @@ export default function BedPlanner() {
           )}
         </div>
       </div>
+
+      {/* Conflict & companion details */}
+      {(bed.issues.length > 0 || bed.wins.length > 0) && (
+        <div style={{ padding:'12px 16px 0' }}>
+          <div style={LABEL}>Konflikte & Nachbarn</div>
+          <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:8 }}>
+            {bed.issues.map((iss, i) => {
+              const reason = companionReason(iss.a.id, iss.b.id);
+              return (
+                <div key={i} style={{ padding:14, borderRadius:14, background:'rgba(201,84,58,0.08)', border:`1px solid rgba(201,84,58,0.22)` }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                    <div style={{ width:8, height:8, borderRadius:4, background:T.bad, flexShrink:0 }} />
+                    <div style={{ ...LABEL, color:T.bad }}>Konflikt</div>
+                  </div>
+                  <div style={{ fontFamily:'Fraunces,serif', fontSize:15, fontWeight:500 }}>{iss.a.de} <em style={{ color:T.bad }}>vs.</em> {iss.b.de}</div>
+                  {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:5, lineHeight:1.5 }}>{reason}</div>}
+                </div>
+              );
+            })}
+            {bed.wins.slice(0, 4).map((w, i) => {
+              const reason = companionReason(w.a.id, w.b.id);
+              return (
+                <div key={`w${i}`} style={{ padding:14, borderRadius:14, background:'rgba(107,142,78,0.08)', border:`1px solid rgba(107,142,78,0.22)` }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                    <div style={{ width:8, height:8, borderRadius:4, background:T.good, flexShrink:0 }} />
+                    <div style={{ ...LABEL, color:T.good }}>Gute Nachbarn</div>
+                  </div>
+                  <div style={{ fontFamily:'Fraunces,serif', fontSize:15, fontWeight:500 }}>{w.a.de} <em style={{ color:T.good }}>+</em> {w.b.de}</div>
+                  {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:5, lineHeight:1.5 }}>{reason}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Bottom sheet picker */}
       {pickerOpen && (

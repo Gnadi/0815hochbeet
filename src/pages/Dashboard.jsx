@@ -206,6 +206,12 @@ export default function Dashboard() {
         </div>
       )}
 
+      <div style={{ padding:'0 16px 12px' }}>
+        <Btn onClick={() => navigate('/autoplan')} variant="primary" style={{ width:'100%', justifyContent:'center' }}>
+          ✦ Plan generieren
+        </Btn>
+      </div>
+
       <div style={{ padding:'0 20px 8px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Diese Woche</div>
         <button onClick={()=>navigate('/calendar')} style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:600, padding:0 }}>Kalender →</button>

@@ -164,12 +164,6 @@ export default function Dashboard() {
         <h1 style={{ fontFamily:'Fraunces,serif', fontSize:30, margin:0, fontWeight:500, lineHeight:1.1 }}>{greeting()},<br/><em style={{ color:T.green, fontStyle:'italic' }}>{user?.displayName || 'Gärtner'}</em>.</h1>
       </div>
 
-      <div style={{ padding:'0 16px 12px' }}>
-        <Btn onClick={() => navigate('/autoplan')} variant="primary" style={{ width:'100%', justifyContent:'center' }}>
-          ✦ Plan generieren
-        </Btn>
-      </div>
-
       {beds[0] && (
         <div style={{ padding:'0 16px 16px' }}>
           <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:18, boxShadow:'0 1px 0 rgba(31,42,27,0.04),0 8px 24px -16px rgba(31,42,27,0.18)' }}>
@@ -186,6 +180,12 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <div style={{ padding:'0 16px 12px' }}>
+        <Btn onClick={() => navigate('/autoplan')} variant="primary" style={{ width:'100%', justifyContent:'center' }}>
+          ✦ Plan generieren
+        </Btn>
+      </div>
 
       <div style={{ padding:'0 20px 8px' }}><div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Diese Woche</div></div>
       <div style={{ padding:'0 16px 16px', display:'flex', flexDirection:'column', gap:8 }}>

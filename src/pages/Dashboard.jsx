@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useWeather } from '../hooks/useWeather';
 import { T } from '../theme';
-import { plantById } from '../data/plants';
+import { plantById, SHAPES } from '../data/plants';
 import { TabBar } from '../components/TabBar';
 import { AuthModal } from '../components/AuthModal';
 import { Btn, TrashIcon } from '../components/Btn';
@@ -60,11 +60,26 @@ function resolveCells(bed) {
   return bed.cells || {};
 }
 
+function calcFillPct(bed) {
+  const cells = resolveCells(bed);
+  const filled = Object.keys(cells).length;
+  const shape = SHAPES[bed.shapeId] || SHAPES.rect;
+  let totalCells = 0;
+  if (shape.id === 'freeform') {
+    totalCells = Object.keys(bed.customMask || {}).length;
+  } else {
+    for (let y = 0; y < shape.h; y++)
+      for (let x = 0; x < shape.w; x++)
+        if (shape.mask(x, y)) totalCells++;
+  }
+  return totalCells ? Math.round(filled / totalCells * 100) : 0;
+}
+
 function BedCard({ bed, onClick, desktop, onDelete }) {
   const cells = resolveCells(bed);
   const filled = Object.keys(cells).length;
   const pIds = [...new Set(Object.values(cells))].slice(0,5);
-  const pct = bed.total ? Math.round(filled/bed.total*100) : (bed.fillPct || 0);
+  const pct = calcFillPct(bed);
   const [confirm, setConfirm] = useState(false);
 
   function handleDelete(e) {
@@ -152,7 +167,7 @@ export default function Dashboard() {
                 <h3 style={{ fontFamily:'Fraunces,serif', fontSize:22, margin:'4px 0 0', fontWeight:500 }}>{beds[0].name}</h3>
                 <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.inkMute, marginTop:2 }}>{beds[0].width||120} × {beds[0].depth||80} cm</div>
               </div>
-              <div style={{ width:44, height:44, borderRadius:22, background:T.green, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:600 }}>{beds[0].fillPct||0}%</div>
+              <div style={{ width:44, height:44, borderRadius:22, background:T.green, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:600 }}>{calcFillPct(beds[0])}%</div>
             </div>
             <MiniGrid cells={resolveCells(beds[0])} />
             <button onClick={()=>navigate(`/bed/${beds[0].id}`)} style={{ width:'100%', marginTop:12, padding:'10px 16px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:13, fontWeight:600, fontFamily:'inherit' }}>Beet öffnen →</button>
@@ -176,7 +191,7 @@ export default function Dashboard() {
         {beds.map((bed,i) => (
           <div key={i} onClick={()=>navigate(`/bed/${bed.id}`)} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:14, minWidth:140, flexShrink:0, cursor:'pointer' }}>
             <div style={{ fontFamily:'Fraunces,serif', fontSize:15, fontWeight:500, marginBottom:6 }}>{bed.name}</div>
-            <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.green, fontWeight:600 }}>{bed.fillPct||0}% belegt</div>
+            <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.green, fontWeight:600 }}>{calcFillPct(bed)}% belegt</div>
           </div>
         ))}
         <div onClick={()=>navigate('/onboarding')} style={{ background:'transparent', border:`1.5px dashed ${T.borderHi}`, borderRadius:14, padding:14, minWidth:120, flexShrink:0, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>

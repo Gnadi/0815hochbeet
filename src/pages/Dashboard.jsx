@@ -38,15 +38,21 @@ function loadLocalBeds() {
   }).filter(Boolean);
 }
 
-function MiniGrid({ cells, plants, filled, total }) {
-  const filledCount = Object.keys(cells || {}).length || filled || 0;
-  const pIds = plants || Object.values(cells || {}).slice(0,5);
+function MiniGrid({ bed }) {
+  const cells = resolveCells(bed);
+  const shape = SHAPES[bed.shapeId] || SHAPES.rect;
+  const maskFn = shape.id === 'freeform'
+    ? (x, y) => !!( bed.customMask || {} )[`${x},${y}`]
+    : shape.mask;
+  const gridCells = [];
+  for (let y = 0; y < shape.h; y++)
+    for (let x = 0; x < shape.w; x++)
+      gridCells.push({ x, y, valid: maskFn(x, y), pid: cells[`${x},${y}`] || null });
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'repeat(8,1fr)', gap:2, padding:8, background:T.bg, borderRadius:10 }}>
-      {Array.from({length:24}).map((_,k) => {
-        const pid = k < filledCount ? pIds[k % Math.max(pIds.length,1)] : null;
+    <div style={{ display:'grid', gridTemplateColumns:`repeat(${shape.w},1fr)`, gap:2, padding:8, background:T.bg, borderRadius:10 }}>
+      {gridCells.map(({ x, y, valid, pid }) => {
         const p = pid ? plantById(pid) : null;
-        return <div key={k} style={{ aspectRatio:'1', background:p?`oklch(0.62 0.1 ${p.hue})`:'rgba(31,42,27,0.06)', borderRadius:3 }} />;
+        return <div key={`${x},${y}`} style={{ aspectRatio:'1', background:!valid?'transparent':p?`oklch(0.62 0.1 ${p.hue})`:'rgba(31,42,27,0.06)', borderRadius:3 }} />;
       })}
     </div>
   );
@@ -106,7 +112,7 @@ function BedCard({ bed, onClick, desktop, onDelete }) {
           <div style={{ width:38, height:38, borderRadius:19, background:T.green, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'JetBrains Mono,monospace', fontSize:11, fontWeight:600, flexShrink:0 }}>{pct}%</div>
         </div>
       </div>
-      <MiniGrid cells={cells} filled={filled} />
+      <MiniGrid bed={bed} />
       <div style={{ display:'flex', marginTop:12 }}>
         {pIds.slice(0,5).map((pid,k) => {
           const p = plantById(pid);
@@ -169,7 +175,7 @@ export default function Dashboard() {
               </div>
               <div style={{ width:44, height:44, borderRadius:22, background:T.green, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:600 }}>{calcFillPct(beds[0])}%</div>
             </div>
-            <MiniGrid cells={resolveCells(beds[0])} />
+            <MiniGrid bed={beds[0]} />
             <button onClick={()=>navigate(`/bed/${beds[0].id}`)} style={{ width:'100%', marginTop:12, padding:'10px 16px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:13, fontWeight:600, fontFamily:'inherit' }}>Beet öffnen →</button>
           </div>
         </div>

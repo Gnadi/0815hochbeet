@@ -23,8 +23,8 @@ function saveBedLocally(bedId, data) {
 
 // ─── Optimized greedy companion-aware bed planner ───────────────────────────
 function generatePlan(goal, picks, widthCm, depthCm) {
-  const cols = Math.max(1, Math.floor(widthCm / 25));
-  const rows = Math.max(1, Math.floor(depthCm / 25));
+  const cols = Math.max(1, Math.floor(widthCm / 75));
+  const rows = Math.max(1, Math.floor(depthCm / 75));
   const available = picks.map(id => plantById(id)).filter(Boolean);
   if (!available.length) return null;
 
@@ -222,7 +222,7 @@ export default function AutoPlan() {
         <input type="number" value={widthCm} onChange={e=>setWidthCm(e.target.value)} style={{ width:80, padding:10, background:T.panel, border:`1px solid ${T.border}`, color:T.ink, borderRadius:10, ...MONO }} />
         <span style={{ ...MONO, color:T.inkMute, fontSize:11 }}>cm ×</span>
         <input type="number" value={depthCm} onChange={e=>setDepthCm(e.target.value)} style={{ width:80, padding:10, background:T.panel, border:`1px solid ${T.border}`, color:T.ink, borderRadius:10, ...MONO }} />
-        <span style={{ ...MONO, color:T.inkMute, fontSize:11 }}>cm = {Math.floor(widthCm/25)*Math.floor(depthCm/25)} Felder</span>
+        <span style={{ ...MONO, color:T.inkMute, fontSize:11 }}>cm = {Math.floor(widthCm/75)*Math.floor(depthCm/75)} Felder</span>
       </div>
 
       <Btn onClick={generate} variant="primary" style={{ width:'100%', justifyContent:'center', padding:'14px 24px', fontSize:14 }}>

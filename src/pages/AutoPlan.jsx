@@ -23,8 +23,8 @@ function saveBedLocally(bedId, data) {
 
 // ─── Optimized greedy companion-aware bed planner ───────────────────────────
 function generatePlan(goal, picks, widthCm, depthCm) {
-  const cols = Math.max(1, Math.floor(widthCm / 25));
-  const rows = Math.max(1, Math.floor(depthCm / 25));
+  const cols = Math.max(1, Math.floor(widthCm / 75));
+  const rows = Math.max(1, Math.floor(depthCm / 75));
   const available = picks.map(id => plantById(id)).filter(Boolean);
   if (!available.length) return null;
 
@@ -166,7 +166,7 @@ export default function AutoPlan() {
           Wie groß ist dein <em style={{ color:T.green, fontStyle:'italic' }}>Beet</em>?
         </h2>
         <p style={{ fontSize:13, color:T.inkDim, marginBottom:28, lineHeight:1.6 }}>
-          Gib die Maße deines Hochbeets ein. Jede Einheit entspricht 25 × 25 cm.
+          Gib die Maße deines Hochbeets ein. Jede Pflanze braucht 75 × 75 cm.
         </p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:16 }}>
           <div>
@@ -179,10 +179,10 @@ export default function AutoPlan() {
           </div>
         </div>
         <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:12, padding:'12px 16px', display:'flex', alignItems:'center', gap:10 }}>
-          <span style={{ ...MONO, fontSize:22, color:T.green, fontWeight:700 }}>{Math.max(1,Math.floor(+widthCm/25)) * Math.max(1,Math.floor(+depthCm/25))}</span>
+          <span style={{ ...MONO, fontSize:22, color:T.green, fontWeight:700 }}>{Math.max(1,Math.floor(+widthCm/75)) * Math.max(1,Math.floor(+depthCm/75))}</span>
           <div>
             <div style={{ fontSize:12, fontWeight:600, color:T.ink }}>Felder</div>
-            <div style={{ fontSize:11, color:T.inkMute }}>{Math.max(1,Math.floor(+widthCm/25))} × {Math.max(1,Math.floor(+depthCm/25))} Raster</div>
+            <div style={{ fontSize:11, color:T.inkMute }}>{Math.max(1,Math.floor(+widthCm/75))} × {Math.max(1,Math.floor(+depthCm/75))} Raster</div>
           </div>
         </div>
       </div>

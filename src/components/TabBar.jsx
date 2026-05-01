@@ -1,10 +1,10 @@
 import { T } from '../theme';
 import { useNavigate } from 'react-router-dom';
 const tabs = [
-  { id:'home',   label:'Heute',   icon:'◐', path:'/dashboard' },
-  { id:'beds',   label:'Beete',   icon:'▦', path:'/beds' },
-  { id:'plants', label:'Pflanzen',icon:'◉', path:'/plants' },
-  { id:'more',   label:'Mehr',    icon:'≡', path:'/more' },
+  { id:'home',     label:'Heute',    icon:'◐', path:'/dashboard' },
+  { id:'beds',     label:'Beete',    icon:'▦', path:'/beds' },
+  { id:'calendar', label:'Kalender', icon:'◫', path:'/calendar' },
+  { id:'plants',   label:'Pflanzen', icon:'◉', path:'/plants' },
 ];
 export function TabBar({ active }) {
   const navigate = useNavigate();

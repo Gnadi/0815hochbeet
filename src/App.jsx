@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import BedPlanner from './pages/BedPlanner';
 import SeasonSwitcher from './pages/SeasonSwitcher';
 import AutoPlan from './pages/AutoPlan';
+import CalendarPage from './pages/CalendarPage';
 import './index.css';
 
 function Guard({ children }) {
@@ -32,6 +33,7 @@ function AppRoutes() {
       <Route path="/bed/:bedId" element={<Guard><BedPlanner /></Guard>} />
       <Route path="/bed/:bedId/seasons" element={<Guard><SeasonSwitcher /></Guard>} />
       <Route path="/autoplan" element={<Guard><AutoPlan /></Guard>} />
+      <Route path="/calendar" element={<Guard><CalendarPage /></Guard>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

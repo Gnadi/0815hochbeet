@@ -98,7 +98,7 @@ function PlantCard({ plant }) {
               </span>
             )}
             <span style={{ ...MONO, fontSize: 10, padding: '3px 9px', borderRadius: 999, background: T.bg, border: `1px solid ${T.border}`, color: T.inkDim }}>
-              ↔ {plant.spacing} Felder Abstand
+              ↔ {plant.spacing_cm} cm Abstand
             </span>
           </div>
 

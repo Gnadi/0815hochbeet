@@ -1,77 +1,163 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { T } from '../theme';
-import { PlantTile } from './PlantTile';
-import { plantById } from '../data/plants';
+import { plantById, SNAP_CM } from '../data/plants';
 
-export function BedCanvas({ bed, cellSize=64, showSun=false, showConflict=true, draggingPlant, onCellPlace, onCellRemove, mobile=false }) {
-  const { shape, cells, cellStatus, sunMap, shapeEditing, setMaskCell, customMask, isFreeform, bedWidth, bedDepth } = bed;
-  const w=shape.w, h=shape.h;
-  const editing = shapeEditing && isFreeform;
-  const [paintMode, setPaintMode] = useState(null);
+function snap(v) { return Math.round(v / SNAP_CM) * SNAP_CM; }
+
+export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, onCellRemove, readOnly=false }) {
+  const { cells, plantStatus, bedWidth, bedDepth } = bed;
+  const bw = bedWidth || 120;
+  const bh = bedDepth || 80;
+  const containerRef = useRef(null);
+  const [canvasW, setCanvasW] = useState(0);
+  const [ghostPos, setGhostPos] = useState(null);
 
   useEffect(() => {
-    const up = () => setPaintMode(null);
-    window.addEventListener('mouseup', up);
-    return () => window.removeEventListener('mouseup', up);
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0) setCanvasW(rect.width);
+    const obs = new ResizeObserver(([e]) => setCanvasW(e.contentRect.width));
+    obs.observe(el);
+    return () => obs.disconnect();
   }, []);
 
-  const dim = (() => {
-    if (!isFreeform) return {w:w*25,h:h*25};
-    let minX=w,maxX=-1,minY=h,maxY=-1;
-    Object.keys(customMask||{}).forEach(k=>{
-      const [cx,cy]=k.split(',').map(Number);
-      if(cx<minX)minX=cx;if(cx>maxX)maxX=cx;
-      if(cy<minY)minY=cy;if(cy>maxY)maxY=cy;
-    });
-    if(maxX<0)return{w:0,h:0};
-    return{w:(maxX-minX+1)*25,h:(maxY-minY+1)*25};
-  })();
+  const scale = canvasW > 0 ? canvasW / bw : 1;
+  const canvasH = scale * bh;
+
+  function getCanvasCm(clientX, clientY) {
+    if (!containerRef.current) return null;
+    const rect = containerRef.current.getBoundingClientRect();
+    return {
+      xCm: snap((clientX - rect.left) / scale),
+      yCm: snap((clientY - rect.top)  / scale),
+    };
+  }
+
+  function handleDrop(e) {
+    if (readOnly) return;
+    e.preventDefault();
+    const plantId = e.dataTransfer.getData('plant');
+    if (!plantId) return;
+    const pos = getCanvasCm(e.clientX, e.clientY);
+    if (pos) onCellPlace(pos.xCm, pos.yCm, plantId);
+    setGhostPos(null);
+  }
+
+  function handleDragOver(e) {
+    if (readOnly) return;
+    e.preventDefault();
+    const pos = getCanvasCm(e.clientX, e.clientY);
+    if (pos) setGhostPos(pos);
+  }
+
+  function handleClick(e) {
+    if (readOnly || !draggingPlant) return;
+    const pos = getCanvasCm(e.clientX, e.clientY);
+    if (pos) onCellPlace(pos.xCm, pos.yCm, draggingPlant);
+  }
+
+  const ghostPlant = ghostPos && draggingPlant ? plantById(draggingPlant) : null;
+
+  const snapDots = [];
+  if (!readOnly && canvasW > 0) {
+    for (let i = 0; i <= Math.floor(bw / SNAP_CM); i++)
+      for (let j = 0; j <= Math.floor(bh / SNAP_CM); j++)
+        snapDots.push(<circle key={`${i}-${j}`} cx={i*SNAP_CM*scale} cy={j*SNAP_CM*scale} r={1} fill="rgba(31,42,27,0.45)" />);
+  }
 
   return (
-    <div style={{
-      display:'inline-block', padding:mobile?16:28,
-      background:T.paper, borderRadius:mobile?16:20,
-      border:editing?`2px dashed ${T.terra}`:`1px solid ${T.border}`,
-      boxShadow:'0 12px 32px -16px rgba(31,42,27,0.18),inset 0 0 0 6px rgba(255,255,255,0.4)',
-      position:'relative', userSelect:'none',
-      backgroundImage:'radial-gradient(circle at 20% 30%,rgba(31,42,27,0.025) 1px,transparent 1px),radial-gradient(circle at 70% 60%,rgba(31,42,27,0.02) 1px,transparent 1px)',
-      backgroundSize:'6px 6px,9px 9px',
-    }}>
-      <div style={{position:'absolute',top:-14,left:'50%',transform:'translateX(-50%)',padding:'4px 14px',background:editing?T.terra:T.green,color:'#fff',borderRadius:999,fontFamily:'JetBrains Mono,monospace',fontSize:10,letterSpacing:'0.1em',textTransform:'uppercase',whiteSpace:'nowrap'}}>
-        {editing?'Form bearbeiten':`${shape.de} · ${bedWidth&&bedDepth?`${bedWidth}×${bedDepth}`:`${dim.w}×${dim.h}`} cm`}
-      </div>
-      <div style={{display:'grid',gridTemplateColumns:`repeat(${w},${cellSize}px)`,gridTemplateRows:`repeat(${h},${cellSize}px)`,gap:3}}>
-        {Array.from({length:h}).map((_,y)=>
-          Array.from({length:w}).map((_,x)=>{
-            const valid=shape.mask(x,y);
-            const key=`${x},${y}`;
-            const pid=cells[key];
-            const status=cellStatus[key];
-            const sun=sunMap[key];
-            const sunBg=!valid?'transparent':sun==='full'?'rgba(217,164,65,0.18)':sun==='part'?'rgba(217,164,65,0.07)':'rgba(62,92,48,0.10)';
-
-            if (editing) return (
-              <div key={key}
-                onMouseDown={e=>{e.preventDefault();const wasOn=!!customMask[key];const mode=wasOn?'remove':'add';setPaintMode(mode);setMaskCell(x,y,mode==='add');}}
-                onMouseEnter={()=>{if(!paintMode)return;setMaskCell(x,y,paintMode==='add');}}
-                onTouchStart={e=>{e.preventDefault();const wasOn=!!customMask[key];setMaskCell(x,y,!wasOn);}}
-                style={{background:valid?'rgba(62,92,48,0.22)':'rgba(31,42,27,0.04)',border:valid?`1.5px solid ${T.green}`:`1.5px dashed rgba(31,42,27,0.18)`,borderRadius:6,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'background 0.1s'}}>
-                <div style={{fontSize:14,color:valid?T.green:'rgba(31,42,27,0.3)',fontWeight:700}}>{valid?'−':'+'}</div>
-              </div>
-            );
-
-            return (
-              <div key={key}
-                onClick={()=>{if(editing)return;if(!valid)return;if(pid)onCellRemove(x,y);else if(draggingPlant)onCellPlace(x,y,draggingPlant);}}
-                onDragOver={e=>valid&&e.preventDefault()}
-                onDrop={e=>{e.preventDefault();if(editing)return;const p=e.dataTransfer.getData('plant');if(p&&valid)onCellPlace(x,y,p);}}
-                style={{position:'relative',background:valid?(showSun?sunBg:'rgba(31,42,27,0.04)'):'transparent',border:valid?`1px solid rgba(31,42,27,0.08)`:'none',borderRadius:6,cursor:valid?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                {valid&&!pid&&<div style={{width:3,height:3,borderRadius:2,background:'rgba(31,42,27,0.18)'}}/>}
-                {pid&&<div className="pop-in" style={{width:cellSize-8,height:cellSize-8}}><PlantTile plant={plantById(pid)} size={cellSize-8} showLabel={false} status={showConflict?status?.status:undefined} draggable={false} glow={showConflict&&status?.status!=='neutral'}/></div>}
-              </div>
-            );
-          })
+    <div style={{ position:'relative', display:'block', width:'100%', userSelect:'none', boxSizing:'border-box' }}>
+      {!readOnly && (
+        <div style={{ textAlign:'center', marginBottom:8, fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.inkMute, textTransform:'uppercase', letterSpacing:'0.08em' }}>
+          {bw} × {bh} cm
+        </div>
+      )}
+      <div
+        ref={containerRef}
+        id="bed-canvas"
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={() => setGhostPos(null)}
+        onClick={handleClick}
+        style={{
+          position:'relative', width:'100%',
+          height: canvasW > 0 ? canvasH : undefined,
+          aspectRatio: canvasW === 0 ? `${bw} / ${bh}` : undefined,
+          background:`radial-gradient(ellipse at 50% 120%, rgba(62,52,28,0.22), rgba(120,95,60,0.12) 55%, transparent),
+            linear-gradient(175deg, rgba(180,148,95,0.25) 0%, rgba(145,112,72,0.2) 100%)`,
+          borderRadius: readOnly ? 10 : 14,
+          overflow:'hidden',
+          cursor: readOnly ? 'default' : draggingPlant ? 'crosshair' : 'default',
+          border:'1px solid rgba(139,108,70,0.32)',
+          boxShadow: readOnly ? 'none' : 'inset 0 1px 0 rgba(255,255,255,0.15)',
+        }}
+      >
+        {snapDots.length > 0 && (
+          <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none' }}>
+            {snapDots}
+          </svg>
         )}
+
+        {canvasW > 0 && Object.entries(cells).map(([key, item]) => {
+          if (typeof item !== 'object') return null;
+          const {plantId, x, y} = item;
+          const p = plantById(plantId);
+          if (!p) return null;
+          const d = p.spacing_cm * scale;
+          const cx = (x / bw) * canvasW;
+          const cy = (y / bh) * canvasH;
+          const status = showConflict ? plantStatus?.[key] : null;
+          const ring = status?.status === 'bad' ? T.bad : status?.status === 'good' ? T.good : null;
+          return (
+            <div
+              key={key}
+              onClick={readOnly ? undefined : (e) => { e.stopPropagation(); onCellRemove(key); }}
+              style={{
+                position:'absolute',
+                width:d, height:d,
+                left:cx - d/2, top:cy - d/2,
+                borderRadius:'50%',
+                background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`,
+                boxShadow: ring
+                  ? `0 0 0 3px ${ring}, 0 3px 10px -2px rgba(0,0,0,0.35)`
+                  : '0 3px 10px -2px rgba(0,0,0,0.25)',
+                display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                cursor: readOnly ? 'default' : 'pointer',
+                pointerEvents: readOnly ? 'none' : 'auto',
+                transition:'box-shadow 0.2s',
+                userSelect:'none',
+              }}
+            >
+              {d > 22 && (
+                <span style={{ fontSize:Math.min(d*0.38, 22), fontFamily:'Fraunces,serif', color:'rgba(255,255,255,0.95)', fontStyle:'italic', lineHeight:1, pointerEvents:'none' }}>
+                  {p.glyph[0]}
+                </span>
+              )}
+              {d > 46 && (
+                <span style={{ fontSize:Math.min(d*0.13, 11), color:'rgba(255,255,255,0.85)', fontWeight:600, letterSpacing:'0.02em', pointerEvents:'none' }}>
+                  {p.de}
+                </span>
+              )}
+            </div>
+          );
+        })}
+
+        {ghostPlant && canvasW > 0 && (() => {
+          const d = ghostPlant.spacing_cm * scale;
+          const cx = (ghostPos.xCm / bw) * canvasW;
+          const cy = (ghostPos.yCm / bh) * canvasH;
+          return (
+            <div style={{
+              position:'absolute', pointerEvents:'none',
+              width:d, height:d,
+              left:cx - d/2, top:cy - d/2,
+              borderRadius:'50%',
+              background:`oklch(0.80 0.10 ${ghostPlant.hue} / 0.45)`,
+              border:`2px dashed oklch(0.55 0.15 ${ghostPlant.hue})`,
+            }} />
+          );
+        })()}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 // Plant library — research-based companion planting data for Central Europe
+export const SNAP_CM = 5;
 // Sources: Gertrud Franck "Mischkulturen im Gemüsegarten", DGG,
 // Sepp Brunner, Bioland-Anbaurichtlinien, multiple German horticultural
 // research publications. This data is also seeded to Firestore (plants/{id}).

@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect } from 'react';
-import { PLANTS, SHAPES, pairScore, plantById, defaultFreeformMask } from '../data/plants';
+import { PLANTS, SHAPES, SNAP_CM, pairScore, plantById, defaultFreeformMask } from '../data/plants';
 
 const EMPTY_SC = { spring:{}, summer:{}, autumn:{}, winter:{} };
+
+function snap(v) { return Math.round(v / SNAP_CM) * SNAP_CM; }
 
 export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null) {
   const [shapeId, setShapeId] = useState(initialShapeId);
   const [customMask, setCustomMask] = useState(() => defaultFreeformMask());
-  // Each season has its own independent cell map
   const [seasonCells, setSeasonCells] = useState(EMPTY_SC);
   const [sunMap, setSunMap] = useState({});
   const [season, setSeason] = useState('summer');
@@ -30,7 +31,7 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     return { ...baseShape, mask: (x,y) => !!customMask[`${x},${y}`] };
   }, [baseShape, customMask]);
 
-  // Shape change resets ALL seasons (shape is shared across seasons)
+  // Shape change resets ALL seasons
   useEffect(() => {
     setSeasonCells(EMPTY_SC);
     setHistory([]); setFuture([]);
@@ -47,7 +48,6 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
   // eslint-disable-next-line
   }, [shapeId, baseShape]);
 
-  // Snapshots store the full seasonCells so undo/redo works across season switches
   function snapshot() {
     setHistory(h=>[...h.slice(-30),{
       seasonCells: JSON.parse(JSON.stringify(seasonCells)),
@@ -71,35 +71,52 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     if (nxt.customMask) setCustomMask(nxt.customMask);
   }
 
-  // All mutations operate on the current season only
-  function place(x,y,plantId) {
-    if (!shape.mask(x,y)) return;
-    snapshot();
-    setSeasonCells(sc=>({ ...sc, [season]:{ ...sc[season], [`${x},${y}`]:plantId } }));
-  }
-  function remove(x,y) {
-    snapshot();
-    setSeasonCells(sc=>{ const n={...sc[season]}; delete n[`${x},${y}`]; return {...sc,[season]:n}; });
-  }
-  function clear() {
-    snapshot();
-    setSeasonCells(sc=>({ ...sc, [season]:{} }));
+  // Checks whether a plant can be placed at the given cm position (no circle overlap)
+  function canPlace(xCm, yCm, plantId, existing = cells) {
+    const p = plantById(plantId);
+    if (!p) return false;
+    for (const item of Object.values(existing)) {
+      if (typeof item !== 'object') continue;
+      const p2 = plantById(item.plantId);
+      if (!p2) continue;
+      const minDist = (p.spacing_cm + p2.spacing_cm) / 2;
+      if (Math.hypot(xCm - item.x, yCm - item.y) < minDist) return false;
+    }
+    return true;
   }
 
-  // Freeform mask ops — removing a cell clears it in ALL seasons
+  // Place a plant at cm coordinates — snaps, clamps, checks collision
+  function place(xCm, yCm, plantId) {
+    const p = plantById(plantId);
+    if (!p) return;
+    const r = p.spacing_cm / 2;
+    const bw = bedWidth || (shape.w * 25);
+    const bh = bedDepth || (shape.h * 25);
+    const cx = Math.max(r, Math.min(bw - r, snap(xCm)));
+    const cy = Math.max(r, Math.min(bh - r, snap(yCm)));
+    if (!canPlace(cx, cy, plantId)) return;
+    snapshot();
+    const key = `${cx}_${cy}`;
+    setSeasonCells(sc => ({ ...sc, [season]: { ...sc[season], [key]: {plantId, x:cx, y:cy} } }));
+  }
+
+  function remove(key) {
+    snapshot();
+    setSeasonCells(sc => { const n={...sc[season]}; delete n[key]; return {...sc,[season]:n}; });
+  }
+
+  function clear() {
+    snapshot();
+    setSeasonCells(sc => ({ ...sc, [season]:{} }));
+  }
+
+  // Freeform mask ops
   function setMaskCell(x,y,on) {
     if (shapeId!=='freeform') return;
     const key=`${x},${y}`;
     if (!!customMask[key]===on) return;
     snapshot();
     setCustomMask(m=>{const n={...m};if(on)n[key]=true;else delete n[key];return n;});
-    if (!on) {
-      setSeasonCells(sc=>{
-        const next={};
-        Object.entries(sc).forEach(([s,c])=>{ const n={...c}; delete n[key]; next[s]=n; });
-        return next;
-      });
-    }
   }
   function toggleMaskCell(x,y) { setMaskCell(x,y,!customMask[`${x},${y}`]); }
   function clearMask()  { snapshot(); setCustomMask({}); setSeasonCells(EMPTY_SC); }
@@ -111,87 +128,114 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     setHistory([]); setFuture([]);
   }
 
-  const cellStatus = useMemo(() => {
-    const out={};
-    Object.entries(cells).forEach(([key,pid])=>{
-      const [x,y]=key.split(',').map(Number);
-      let bad=0,good=0,neighbors=[];
-      [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy])=>{
-        const nk=`${x+dx},${y+dy}`, np=cells[nk];
-        if (!np) return;
-        const s=pairScore(pid,np);
-        if (s<0){bad++;neighbors.push({key:nk,plant:np,score:s});}
-        else if (s>0){good++;neighbors.push({key:nk,plant:np,score:s});}
+  // Distance-based companion status: neighbor = within 1.5× touching distance in cm
+  const plantStatus = useMemo(() => {
+    const out = {};
+    const entries = Object.entries(cells).filter(([, v]) => typeof v === 'object');
+    entries.forEach(([key, {plantId, x, y}]) => {
+      const p = plantById(plantId);
+      if (!p) return;
+      let bad = 0, good = 0;
+      const neighbors = [];
+      entries.forEach(([key2, {plantId:pid2, x:x2, y:y2}]) => {
+        if (key === key2) return;
+        const p2 = plantById(pid2);
+        if (!p2) return;
+        const dist = Math.hypot(x - x2, y - y2);
+        const touchDist = (p.spacing_cm + p2.spacing_cm) / 2;
+        if (dist <= touchDist * 1.5) {
+          const s = pairScore(plantId, pid2);
+          if (s < 0) { bad++; neighbors.push({key:key2, plantId:pid2, score:s}); }
+          else if (s > 0) { good++; neighbors.push({key:key2, plantId:pid2, score:s}); }
+        }
       });
-      out[key]={bad,good,neighbors,status:bad?'bad':good?'good':'neutral'};
+      out[key] = {bad, good, neighbors, status: bad?'bad':good?'good':'neutral'};
     });
     return out;
   }, [cells]);
 
   const issues = useMemo(() => {
-    const seen=new Set(), list=[];
-    Object.entries(cellStatus).forEach(([key,info])=>{
+    const seen = new Set(), list = [];
+    Object.entries(plantStatus).forEach(([key, info]) => {
       if (!info.bad) return;
-      info.neighbors.filter(n=>n.score<0).forEach(n=>{
-        const sig=[key,n.key].sort().join('|');
+      info.neighbors.filter(n => n.score < 0).forEach(n => {
+        const sig = [key, n.key].sort().join('|');
         if (seen.has(sig)) return; seen.add(sig);
-        list.push({type:'bad',a:plantById(cells[key]),b:plantById(n.plant),key,nKey:n.key});
+        const item = cells[key];
+        const pidA = typeof item === 'object' ? item.plantId : item;
+        list.push({type:'bad', a:plantById(pidA), b:plantById(n.plantId), key, nKey:n.key});
       });
     });
     return list;
-  }, [cellStatus,cells]);
+  }, [plantStatus, cells]);
 
   const wins = useMemo(() => {
-    const seen=new Set(), list=[];
-    Object.entries(cellStatus).forEach(([key,info])=>{
-      info.neighbors.filter(n=>n.score>0).forEach(n=>{
-        const sig=[key,n.key].sort().join('|');
+    const seen = new Set(), list = [];
+    Object.entries(plantStatus).forEach(([key, info]) => {
+      info.neighbors.filter(n => n.score > 0).forEach(n => {
+        const sig = [key, n.key].sort().join('|');
         if (seen.has(sig)) return; seen.add(sig);
-        list.push({type:'good',a:plantById(cells[key]),b:plantById(n.plant)});
+        const item = cells[key];
+        const pidA = typeof item === 'object' ? item.plantId : item;
+        list.push({type:'good', a:plantById(pidA), b:plantById(n.plantId)});
       });
     });
     return list;
-  }, [cellStatus,cells]);
+  }, [plantStatus, cells]);
 
   function fixBed() {
     snapshot();
-    let next={...cells}, changed=true, guard=0;
-    while (changed && guard++<50) {
-      changed=false;
-      Object.keys(next).forEach(key=>{
-        const [x,y]=key.split(',').map(Number);
-        const pid=next[key];
-        const nbrs=[[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>next[`${x+dx},${y+dy}`]).filter(Boolean);
-        if (!nbrs.some(np=>pairScore(pid,np)<0)) return;
-        const cands=PLANTS.filter(p=>p.seasons.includes(season))
-          .map(p=>({p,score:nbrs.reduce((s,np)=>s+pairScore(p.id,np),0),hasBad:nbrs.some(np=>pairScore(p.id,np)<0)}))
-          .filter(c=>!c.hasBad).sort((a,b)=>b.score-a.score);
-        if (cands.length){next[key]=cands[0].p.id;changed=true;}
+    let next = {...cells}, changed = true, guard = 0;
+    while (changed && guard++ < 50) {
+      changed = false;
+      Object.entries(next).forEach(([key, item]) => {
+        if (typeof item !== 'object') return;
+        const {plantId, x, y} = item;
+        const p = plantById(plantId);
+        if (!p) return;
+        const nbrs = Object.entries(next)
+          .filter(([k2, item2]) => {
+            if (k2 === key || typeof item2 !== 'object') return false;
+            const p2 = plantById(item2.plantId);
+            if (!p2) return false;
+            return Math.hypot(x - item2.x, y - item2.y) <= (p.spacing_cm + p2.spacing_cm) / 2 * 1.5;
+          })
+          .map(([, {plantId:pid2}]) => pid2);
+        if (!nbrs.some(np => pairScore(plantId, np) < 0)) return;
+        const cands = PLANTS.filter(pl => pl.seasons.includes(season))
+          .map(pl => ({
+            p: pl,
+            score: nbrs.reduce((s, np) => s + pairScore(pl.id, np), 0),
+            hasBad: nbrs.some(np => pairScore(pl.id, np) < 0),
+          }))
+          .filter(c => !c.hasBad)
+          .sort((a, b) => b.score - a.score);
+        if (cands.length) { next[key] = {plantId:cands[0].p.id, x, y}; changed = true; }
       });
     }
-    setSeasonCells(sc=>({...sc,[season]:next}));
+    setSeasonCells(sc => ({...sc, [season]:next}));
   }
 
   const stats = useMemo(() => {
-    const filled=Object.keys(cells).length;
-    let totalCells=0;
-    for (let y=0;y<shape.h;y++) for (let x=0;x<shape.w;x++) if (shape.mask(x,y)) totalCells++;
-    const yieldKg=Object.values(cells).reduce((s,pid)=>s+(plantById(pid)?.yield||0),0);
-    return {filled,totalCells,yieldKg,fillPct:totalCells?Math.round(filled/totalCells*100):0};
-  }, [cells,shape]);
+    const validCells = Object.values(cells).filter(v => typeof v === 'object');
+    const placed = validCells.length;
+    const yieldKg = validCells.reduce((s, {plantId}) => s + (plantById(plantId)?.yield || 0), 0);
+    return {placed, yieldKg};
+  }, [cells]);
 
   return {
-    shape,shapeId,setShape:setShapeId,
-    cells,seasonCells,loadSeasonCells,
-    place,remove,clear,
-    cellStatus,issues,wins,
-    season,setSeason,
+    shape, shapeId, setShape:setShapeId,
+    cells, seasonCells, loadSeasonCells,
+    place, remove, clear, canPlace,
+    plantStatus,
+    issues, wins,
+    season, setSeason,
     sunMap,
-    undo,redo,canUndo:history.length>0,canRedo:future.length>0,
-    fixBed,stats,
-    isFreeform:shapeId==='freeform',
-    shapeEditing,setShapeEditing,
-    toggleMaskCell,setMaskCell,clearMask,resetMask,
+    undo, redo, canUndo:history.length>0, canRedo:future.length>0,
+    fixBed, stats,
+    isFreeform: shapeId==='freeform',
+    shapeEditing, setShapeEditing,
+    toggleMaskCell, setMaskCell, clearMask, resetMask,
     customMask,
     bedWidth, bedDepth,
   };

@@ -111,7 +111,6 @@ export default function BedPlanner() {
   }
 
   const seasonPlants = PLANTS.filter(p => p.seasons.includes(bed.season));
-  const cellSize = mobile ? 38 : 64;
 
   if (!loaded) return <div style={{ height:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:T.bg, color:T.inkMute, fontFamily:'JetBrains Mono,monospace', fontSize:12 }}>Laden…</div>;
 
@@ -143,14 +142,20 @@ export default function BedPlanner() {
 
       {/* Stats */}
       <div style={{ padding:'0 16px 12px', display:'flex', gap:6, flexWrap:'wrap' }}>
-        <Chip style={{ fontSize:10 }}><span style={{ color:T.inkMute }}>Belegt</span> <strong style={MONO}>{bed.stats.filled}/{bed.stats.totalCells}</strong></Chip>
+        <Chip style={{ fontSize:10 }}><span style={{ color:T.inkMute }}>Pflanzen</span> <strong style={MONO}>{bed.stats.placed}</strong></Chip>
         <Chip style={{ fontSize:10 }}><span style={{ color:T.inkMute }}>Ertrag</span> <strong style={{ ...MONO, color:T.green }}>~{bed.stats.yieldKg.toFixed(1)} kg</strong></Chip>
         {bed.issues.length>0 && <Chip style={{ fontSize:10, background:'rgba(201,84,58,0.10)', borderColor:'rgba(201,84,58,0.3)' }}><span style={{ color:T.bad }}>⚠ {bed.issues.length} Konflikt{bed.issues.length>1?'e':''}</span></Chip>}
       </div>
 
       {/* Canvas */}
-      <div style={{ display:'flex', justifyContent:'center', padding:'20px 16px 0' }}>
-        <BedCanvas bed={bed} cellSize={cellSize} showSun={false} showConflict={true} draggingPlant={selectedPlant} onCellPlace={(x,y,p)=>{bed.place(x,y,p||selectedPlant);}} onCellRemove={bed.remove} mobile />
+      <div style={{ padding:'20px 16px 0' }}>
+        <BedCanvas
+          bed={bed}
+          showConflict={true}
+          draggingPlant={selectedPlant}
+          onCellPlace={(xCm, yCm, plantId) => { bed.place(xCm, yCm, plantId); setSelectedPlant(null); }}
+          onCellRemove={bed.remove}
+        />
       </div>
 
       {/* Plant selection bar */}
@@ -323,8 +328,7 @@ export default function BedPlanner() {
 
         {/* Stats */}
         <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:22 }}>
-          <Chip><span style={{ color:T.inkMute }}>Belegt</span> <strong style={MONO}>{bed.stats.filled}/{bed.stats.totalCells}</strong></Chip>
-          <Chip><span style={{ color:T.inkMute }}>Auslastung</span> <strong style={MONO}>{bed.stats.fillPct}%</strong></Chip>
+          <Chip><span style={{ color:T.inkMute }}>Pflanzen</span> <strong style={MONO}>{bed.stats.placed}</strong></Chip>
           <Chip><span style={{ color:T.inkMute }}>Ertrag</span> <strong style={{ ...MONO, color:T.green }}>~{bed.stats.yieldKg.toFixed(1)} kg</strong></Chip>
           <Chip style={{ background:bed.issues.length?'rgba(201,84,58,0.10)':T.panel, borderColor:bed.issues.length?'rgba(201,84,58,0.3)':T.border }}>
             <span style={{ color:bed.issues.length?T.bad:T.inkMute }}>Konflikte</span>
@@ -332,8 +336,14 @@ export default function BedPlanner() {
           </Chip>
         </div>
 
-        <div style={{ display:'flex', justifyContent:'center' }}>
-          <BedCanvas bed={bed} cellSize={cellSize} showSun={showSun} showConflict={true} draggingPlant={draggingPlant} onCellPlace={bed.place} onCellRemove={bed.remove} />
+        <div>
+          <BedCanvas
+            bed={bed}
+            showConflict={true}
+            draggingPlant={draggingPlant}
+            onCellPlace={(xCm, yCm, plantId) => bed.place(xCm, yCm, plantId)}
+            onCellRemove={bed.remove}
+          />
         </div>
 
         <div style={{ marginTop:20, display:'flex', gap:18, justifyContent:'center', fontSize:11, color:T.inkMute, ...MONO }}>
@@ -424,7 +434,7 @@ export default function BedPlanner() {
             {Object.values(bed.cells).length > 0 && (
               <div style={{ marginTop:20 }}>
                 <div style={{ ...LABEL, marginBottom:12 }}>Pflegeanleitung</div>
-                {[...new Set(Object.values(bed.cells))].map(pid => {
+                {[...new Set(Object.values(bed.cells).map(v => typeof v === 'object' ? v.plantId : v).filter(Boolean))].map(pid => {
                   const p = plantById(pid);
                   return p ? (
                     <div key={pid} style={{ marginBottom:12, padding:12, background:T.panel, border:`1px solid ${T.border}`, borderRadius:12 }}>

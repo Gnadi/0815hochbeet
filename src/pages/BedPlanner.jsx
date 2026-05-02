@@ -45,6 +45,52 @@ export default function BedPlanner() {
   const notesTimer = useRef(null);
   const saveTimer = useRef(null);
   const [bedName, setBedName] = useState('Mein Hochbeet');
+  const touchDragRef = useRef({ active:false, plantId:null });
+  const [touchGhost, setTouchGhost] = useState(null);
+
+  function startTouchDrag(plantId, e) {
+    e.preventDefault();
+    touchDragRef.current = { active:true, plantId };
+    setDraggingPlant(plantId);
+    const touch = e.touches[0];
+    setTouchGhost({ plantId, x:touch.clientX, y:touch.clientY });
+  }
+
+  useEffect(() => {
+    function onTouchMove(e) {
+      if (!touchDragRef.current.active) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      setTouchGhost({ plantId:touchDragRef.current.plantId, x:touch.clientX, y:touch.clientY });
+    }
+    function onTouchEnd(e) {
+      if (!touchDragRef.current.active) return;
+      const touch = e.changedTouches[0];
+      const canvas = document.getElementById('bed-canvas');
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        if (touch.clientX >= rect.left && touch.clientX <= rect.right &&
+            touch.clientY >= rect.top  && touch.clientY <= rect.bottom) {
+          const bw = bed.bedWidth || 120;
+          const bh = bed.bedDepth || 80;
+          const scale = rect.width / bw;
+          const xCm = Math.round(((touch.clientX - rect.left) / scale) / 5) * 5;
+          const yCm = Math.round(((touch.clientY - rect.top)  / scale) / 5) * 5;
+          bed.place(xCm, yCm, touchDragRef.current.plantId);
+        }
+      }
+      touchDragRef.current = { active:false, plantId:null };
+      setDraggingPlant(null);
+      setTouchGhost(null);
+    }
+    window.addEventListener('touchmove', onTouchMove, { passive:false });
+    window.addEventListener('touchend', onTouchEnd);
+    return () => {
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+  // eslint-disable-next-line
+  }, [bed]);
 
   // Load bed data
   useEffect(() => {
@@ -153,7 +199,7 @@ export default function BedPlanner() {
           bed={bed}
           showConflict={true}
           draggingPlant={selectedPlant}
-          onCellPlace={(xCm, yCm, plantId) => { bed.place(xCm, yCm, plantId); setSelectedPlant(null); }}
+          onCellPlace={(xCm, yCm, plantId) => bed.place(xCm, yCm, plantId)}
           onCellRemove={bed.remove}
         />
       </div>
@@ -230,7 +276,10 @@ export default function BedPlanner() {
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
               {seasonPlants.map(p => (
-                <button key={p.id} onClick={()=>{ setSelectedPlant(p.id); setPickerOpen(false); }} style={{ background:T.panel, border:`1.5px solid ${T.border}`, borderRadius:14, padding:12, display:'flex', flexDirection:'column', alignItems:'center', gap:6, cursor:'pointer', fontFamily:'inherit' }}>
+                <button key={p.id}
+                  onClick={()=>{ setSelectedPlant(p.id); setPickerOpen(false); }}
+                  onTouchStart={(e)=>{ startTouchDrag(p.id, e); setPickerOpen(false); }}
+                  style={{ background:selectedPlant===p.id?'#fff':T.panel, border:`1.5px solid ${selectedPlant===p.id?T.green:T.border}`, borderRadius:14, padding:12, display:'flex', flexDirection:'column', alignItems:'center', gap:6, cursor:'pointer', fontFamily:'inherit' }}>
                   <PlantTile plant={p} size={44} showLabel={false} draggable={false} />
                   <div style={{ fontSize:12, fontWeight:600 }}>{p.de}</div>
                   <div style={{ fontSize:9, color:T.inkMute, ...MONO }}>{p.sun==='full'?'☀ Sonne':p.sun==='part'?'⛅ Halb':'☁ Schatten'}</div>
@@ -240,12 +289,24 @@ export default function BedPlanner() {
           </div>
         </>
       )}
+      {/* Touch drag ghost */}
+      {touchGhost && (() => {
+        const p = plantById(touchGhost.plantId);
+        if (!p) return null;
+        const size = 60;
+        return (
+          <div style={{ position:'fixed', left:touchGhost.x - size/2, top:touchGhost.y - size - 18, width:size, height:size, borderRadius:'50%', background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`, zIndex:1000, pointerEvents:'none', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 16px rgba(0,0,0,0.3)' }}>
+            <span style={{ fontFamily:'Fraunces,serif', fontSize:24, color:'rgba(255,255,255,0.95)', fontStyle:'italic' }}>{p.glyph[0]}</span>
+          </div>
+        );
+      })()}
       <TabBar active="beds" />
     </div>
   );
 
   // ─── DESKTOP ────────────────────────────────────────────────────────────────
   return (
+    <>
     <div style={{ display:'grid', gridTemplateColumns:'270px 1fr 320px', height:'100vh', background:T.bg }}>
       {/* LEFT PANEL */}
       <aside style={{ borderRight:`1px solid ${T.border}`, padding:20, overflow:'auto', background:T.paper, scrollbarWidth:'thin' }}>
@@ -272,7 +333,12 @@ export default function BedPlanner() {
         <div style={LABEL}>Pflanzen · Plants</div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:20 }}>
           {seasonPlants.map(p => (
-            <div key={p.id} draggable onDragStart={e=>{e.dataTransfer.setData('plant',p.id);setDraggingPlant(p.id);}} onDragEnd={()=>setDraggingPlant(null)} onClick={()=>setDraggingPlant(draggingPlant===p.id?null:p.id)} style={{ background:draggingPlant===p.id?'#fff':T.panel, border:`1.5px solid ${draggingPlant===p.id?T.green:T.border}`, borderRadius:14, padding:10, cursor:'grab', transition:'all 0.15s', display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
+            <div key={p.id} draggable
+              onDragStart={e=>{e.dataTransfer.setData('plant',p.id);setDraggingPlant(p.id);}}
+              onDragEnd={()=>setDraggingPlant(null)}
+              onClick={()=>setDraggingPlant(draggingPlant===p.id?null:p.id)}
+              onTouchStart={(e)=>startTouchDrag(p.id, e)}
+              style={{ background:draggingPlant===p.id?'#fff':T.panel, border:`1.5px solid ${draggingPlant===p.id?T.green:T.border}`, borderRadius:14, padding:10, cursor:'grab', transition:'all 0.15s', display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
               <PlantTile plant={p} size={42} showLabel={false} draggable={false} />
               <div style={{ fontSize:12, fontWeight:600 }}>{p.de}</div>
               <div style={{ fontSize:9, color:T.inkMute, ...MONO }}>{p.sun==='full'?'☀':p.sun==='part'?'⛅':'☁'}</div>
@@ -453,5 +519,16 @@ export default function BedPlanner() {
         )}
       </aside>
     </div>
+    {touchGhost && (() => {
+      const p = plantById(touchGhost.plantId);
+      if (!p) return null;
+      const size = 60;
+      return (
+        <div style={{ position:'fixed', left:touchGhost.x - size/2, top:touchGhost.y - size - 18, width:size, height:size, borderRadius:'50%', background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`, zIndex:1000, pointerEvents:'none', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 16px rgba(0,0,0,0.3)' }}>
+          <span style={{ fontFamily:'Fraunces,serif', fontSize:24, color:'rgba(255,255,255,0.95)', fontStyle:'italic' }}>{p.glyph[0]}</span>
+        </div>
+      );
+    })()}
+    </>
   );
 }

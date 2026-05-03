@@ -24,8 +24,9 @@ function saveBedLocally(bedId, data) {
 
 function snapV(v) { return Math.round(v / SNAP_CM) * SNAP_CM; }
 
-// Max circles rendered per plant type — prevents tiny plants flooding the canvas.
-const MAX_PER_ZONE = 40;
+// Max circles rendered per plant type in the preview canvas.
+// Each circle represents multiple plants — the real count is shown in the breakdown.
+const MAX_PER_ZONE = 10;
 
 // Generates cm-based plant placements divided into equal vertical strips per plant type.
 // fitCols/fitRows/count are zone-based (not full-bed), so the breakdown table is accurate.
@@ -54,17 +55,19 @@ function generatePlan(goal, picks, widthCm, depthCm) {
   // Build cells — subsample evenly if a zone would exceed MAX_PER_ZONE circles
   const cells = {};
   plantings.forEach(({ plant, fitCols, fitRows }, idx) => {
-    const xStart = idx * zoneW;
-    const total  = fitCols * fitRows;
-    const step   = Math.ceil(total / MAX_PER_ZONE);
-    let placed   = 0;
-    for (let r = 0; r < fitRows && placed < MAX_PER_ZONE; r++) {
-      for (let c = 0; c < fitCols && placed < MAX_PER_ZONE; c++) {
+    const xStart     = idx * zoneW;
+    const total      = fitCols * fitRows;
+    const show       = Math.min(total, MAX_PER_ZONE);
+    const perCircle  = Math.ceil(total / show);   // how many real plants each dot represents
+    const step       = Math.ceil(total / show);
+    let placed       = 0;
+    for (let r = 0; r < fitRows && placed < show; r++) {
+      for (let c = 0; c < fitCols && placed < show; c++) {
         if ((r * fitCols + c) % step !== 0) continue;
         const x = snapV(xStart + c * plant.spacing_cm + plant.spacing_cm / 2);
         const y = snapV(r       * plant.spacing_cm + plant.spacing_cm / 2);
         const key = `${x}_${y}`;
-        if (!cells[key]) { cells[key] = { plantId:plant.id, x, y }; placed++; }
+        if (!cells[key]) { cells[key] = { plantId:plant.id, x, y, count:perCircle }; placed++; }
       }
     }
   });

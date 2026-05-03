@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { T } from '../theme';
 import { plantById, SNAP_CM } from '../data/plants';
 
+const MIN_D = 32; // minimum circle diameter in px regardless of spacing_cm
+
 function snap(v) { return Math.round(v / SNAP_CM) * SNAP_CM; }
 
 export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, onCellRemove, onCellMove, readOnly=false }) {
@@ -12,7 +14,15 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
   const [canvasW, setCanvasW] = useState(0);
   const [ghostPos, setGhostPos] = useState(null);
   const [draggingKey, setDraggingKey] = useState(null);
-  const dragDidMoveRef = useRef(false);
+
+  // Touch drag for placed plants (mobile reposition)
+  const touchMoveRef = useRef({ active:false, key:null, plantId:null, startX:0, startY:0, dragging:false });
+  const [touchGhost, setTouchGhost] = useState(null);
+  const tapHandledRef = useRef(false);
+  const onCellMoveRef = useRef(onCellMove);
+  const onCellRemoveRef = useRef(onCellRemove);
+  useEffect(() => { onCellMoveRef.current = onCellMove; }, [onCellMove]);
+  useEffect(() => { onCellRemoveRef.current = onCellRemove; }, [onCellRemove]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -23,6 +33,60 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
     obs.observe(el);
     return () => obs.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (readOnly) return;
+
+    function getCm(clientX, clientY) {
+      const el = containerRef.current;
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
+      const s = rect.width / bw;
+      return { xCm: snap((clientX - rect.left) / s), yCm: snap((clientY - rect.top) / s) };
+    }
+
+    function onMove(e) {
+      const ref = touchMoveRef.current;
+      if (!ref.active) return;
+      const t = e.touches[0];
+      const dx = Math.abs(t.clientX - ref.startX);
+      const dy = Math.abs(t.clientY - ref.startY);
+      if (!ref.dragging && (dx > 8 || dy > 8)) {
+        touchMoveRef.current.dragging = true;
+      }
+      if (ref.dragging) {
+        e.preventDefault();
+        setTouchGhost({ x:t.clientX, y:t.clientY, plantId:ref.plantId });
+        const pos = getCm(t.clientX, t.clientY);
+        if (pos) setGhostPos(pos);
+      }
+    }
+
+    function onEnd(e) {
+      const ref = touchMoveRef.current;
+      if (!ref.active) return;
+      if (ref.dragging) {
+        const t = e.changedTouches[0];
+        const pos = getCm(t.clientX, t.clientY);
+        if (pos) onCellMoveRef.current?.(ref.key, pos.xCm, pos.yCm);
+      } else {
+        // Tap — decrement/remove
+        tapHandledRef.current = true;
+        onCellRemoveRef.current?.(ref.key);
+        setTimeout(() => { tapHandledRef.current = false; }, 400);
+      }
+      touchMoveRef.current = { active:false, key:null, plantId:null, startX:0, startY:0, dragging:false };
+      setTouchGhost(null);
+      setGhostPos(null);
+    }
+
+    window.addEventListener('touchmove', onMove, { passive:false });
+    window.addEventListener('touchend', onEnd);
+    return () => {
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+    };
+  }, [readOnly, bw, bh]);
 
   const scale = canvasW > 0 ? canvasW / bw : 1;
   const canvasH = scale * bh;
@@ -65,8 +129,9 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
     if (pos) onCellPlace(pos.xCm, pos.yCm, draggingPlant);
   }
 
-  // Ghost shows when dragging from sidebar OR when repositioning a placed plant
-  const ghostPlantId = draggingPlant || (draggingKey ? cells[draggingKey]?.plantId : null);
+  const ghostPlantId = draggingPlant
+    || (draggingKey ? cells[draggingKey]?.plantId : null)
+    || touchGhost?.plantId;
   const ghostPlant = ghostPos && ghostPlantId ? plantById(ghostPlantId) : null;
 
   const snapDots = [];
@@ -111,10 +176,10 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
 
         {canvasW > 0 && Object.entries(cells).map(([key, item]) => {
           if (typeof item !== 'object') return null;
-          const {plantId, x, y} = item;
+          const { plantId, x, y, count=1 } = item;
           const p = plantById(plantId);
           if (!p) return null;
-          const d = p.spacing_cm * scale;
+          const d = Math.max(MIN_D, p.spacing_cm * scale);
           const cx = (x / bw) * canvasW;
           const cy = (y / bh) * canvasH;
           const status = showConflict ? plantStatus?.[key] : null;
@@ -128,17 +193,18 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
                 e.stopPropagation();
                 e.dataTransfer.effectAllowed = 'move';
                 e.dataTransfer.setData('sourceKey', key);
-                dragDidMoveRef.current = false;
                 setDraggingKey(key);
               }}
-              onDragEnd={() => {
-                setDraggingKey(null);
-                setGhostPos(null);
+              onDragEnd={() => { setDraggingKey(null); setGhostPos(null); }}
+              onTouchStart={readOnly ? undefined : (e) => {
+                e.stopPropagation();
+                const t = e.touches[0];
+                touchMoveRef.current = { active:true, key, plantId, startX:t.clientX, startY:t.clientY, dragging:false };
               }}
               onClick={readOnly ? undefined : (e) => {
                 e.stopPropagation();
-                // dragDidMoveRef guards against spurious click-after-drag on some browsers
-                if (!dragDidMoveRef.current) onCellRemove(key);
+                if (tapHandledRef.current) return;
+                onCellRemove(key);
               }}
               style={{
                 position:'absolute',
@@ -167,12 +233,24 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
                   {p.de}
                 </span>
               )}
+              {count > 1 && (
+                <span style={{
+                  position:'absolute', bottom:2, right:2,
+                  background:'rgba(0,0,0,0.5)', color:'#fff',
+                  fontFamily:'JetBrains Mono,monospace',
+                  fontSize:Math.max(8, Math.min(11, d * 0.22)),
+                  borderRadius:3, padding:'0 3px', lineHeight:1.5,
+                  pointerEvents:'none',
+                }}>
+                  ×{count}
+                </span>
+              )}
             </div>
           );
         })}
 
         {ghostPlant && canvasW > 0 && (() => {
-          const d = ghostPlant.spacing_cm * scale;
+          const d = Math.max(MIN_D, ghostPlant.spacing_cm * scale);
           const cx = (ghostPos.xCm / bw) * canvasW;
           const cy = (ghostPos.yCm / bh) * canvasH;
           return (
@@ -187,6 +265,27 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
           );
         })()}
       </div>
+
+      {/* Touch drag ghost — floats above the finger while repositioning */}
+      {touchGhost && (() => {
+        const p = plantById(touchGhost.plantId);
+        if (!p) return null;
+        const size = Math.max(44, p.spacing_cm * scale);
+        return (
+          <div style={{
+            position:'fixed', pointerEvents:'none', zIndex:1000,
+            left: touchGhost.x - size/2, top: touchGhost.y - size - 12,
+            width:size, height:size, borderRadius:'50%',
+            background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`,
+            display:'flex', alignItems:'center', justifyContent:'center',
+            boxShadow:'0 6px 20px rgba(0,0,0,0.35)', opacity:0.9,
+          }}>
+            <span style={{ fontFamily:'Fraunces,serif', fontSize:Math.min(size*0.38,22), color:'rgba(255,255,255,0.95)', fontStyle:'italic' }}>
+              {p.glyph[0]}
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -85,7 +85,8 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     return true;
   }
 
-  // Place a plant at cm coordinates — snaps, clamps, checks collision
+  // Place a plant at cm coordinates — snaps, clamps, checks collision.
+  // If the same plant type exists nearby (within 1.5× spacing), increments its count instead.
   function place(xCm, yCm, plantId) {
     const p = plantById(plantId);
     if (!p) return;
@@ -94,15 +95,40 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     const bh = bedDepth || (shape.h * 25);
     const cx = Math.max(r, Math.min(bw - r, snap(xCm)));
     const cy = Math.max(r, Math.min(bh - r, snap(yCm)));
+
+    // Stack onto a nearby cell of the same plant type
+    const nearby = Object.entries(cells).find(([, item]) => {
+      if (typeof item !== 'object' || item.plantId !== plantId) return false;
+      return Math.hypot(cx - item.x, cy - item.y) < p.spacing_cm * 1.5;
+    });
+    if (nearby) {
+      const [nearKey, nearItem] = nearby;
+      snapshot();
+      setSeasonCells(sc => ({
+        ...sc,
+        [season]: { ...sc[season], [nearKey]: { ...nearItem, count: (nearItem.count || 1) + 1 } },
+      }));
+      return;
+    }
+
     if (!canPlace(cx, cy, plantId)) return;
     snapshot();
     const key = `${cx}_${cy}`;
-    setSeasonCells(sc => ({ ...sc, [season]: { ...sc[season], [key]: {plantId, x:cx, y:cy} } }));
+    setSeasonCells(sc => ({ ...sc, [season]: { ...sc[season], [key]: { plantId, x:cx, y:cy, count:1 } } }));
   }
 
+  // Decrement count; remove cell when count reaches 0
   function remove(key) {
+    const item = cells[key];
     snapshot();
-    setSeasonCells(sc => { const n={...sc[season]}; delete n[key]; return {...sc,[season]:n}; });
+    if (typeof item === 'object' && (item.count || 1) > 1) {
+      setSeasonCells(sc => ({
+        ...sc,
+        [season]: { ...sc[season], [key]: { ...item, count: item.count - 1 } },
+      }));
+    } else {
+      setSeasonCells(sc => { const n = {...sc[season]}; delete n[key]; return {...sc, [season]:n}; });
+    }
   }
 
   function move(fromKey, toX, toY) {
@@ -242,8 +268,8 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
 
   const stats = useMemo(() => {
     const validCells = Object.values(cells).filter(v => typeof v === 'object');
-    const placed = validCells.length;
-    const yieldKg = validCells.reduce((s, {plantId}) => s + (plantById(plantId)?.yield || 0), 0);
+    const placed   = validCells.reduce((s, {count=1}) => s + count, 0);
+    const yieldKg  = validCells.reduce((s, {plantId, count=1}) => s + (plantById(plantId)?.yield || 0) * count, 0);
     return {placed, yieldKg};
   }, [cells]);
 

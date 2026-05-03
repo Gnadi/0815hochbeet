@@ -5,6 +5,7 @@ const tabs = [
   { id:'beds',     label:'Beete',    icon:'▦', path:'/beds' },
   { id:'calendar', label:'Kalender', icon:'◫', path:'/calendar' },
   { id:'plants',   label:'Pflanzen', icon:'◉', path:'/plants' },
+  { id:'forum',    label:'Forum',    icon:'◈', path:'/forum' },
 ];
 export function TabBar({ active }) {
   const navigate = useNavigate();

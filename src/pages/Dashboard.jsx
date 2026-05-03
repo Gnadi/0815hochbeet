@@ -52,8 +52,38 @@ function loadLocalBeds() {
   }).filter(Boolean);
 }
 
+function isNewCellFormat(cells) {
+  const vals = Object.values(cells);
+  return vals.length > 0 && typeof vals[0] === 'object';
+}
+
+function buildMiniGrid(cells, bedW, bedH) {
+  const W = 8, H = 4, grid = {};
+  Object.values(cells).forEach(({plantId, x, y}) => {
+    const mx = Math.min(W-1, Math.floor((x / (bedW||120)) * W));
+    const my = Math.min(H-1, Math.floor((y / (bedH||80))  * H));
+    grid[`${mx},${my}`] = plantId;
+  });
+  return grid;
+}
+
 function MiniGrid({ bed }) {
   const cells = resolveCells(bed);
+
+  if (isNewCellFormat(cells)) {
+    const grid = buildMiniGrid(cells, bed.width, bed.depth);
+    const W = 8, H = 4;
+    return (
+      <div style={{ display:'grid', gridTemplateColumns:`repeat(${W},1fr)`, gap:2, padding:8, background:T.bg, borderRadius:10 }}>
+        {Array.from({length:H}).map((_,y) => Array.from({length:W}).map((_,x) => {
+          const pid = grid[`${x},${y}`];
+          const p = pid ? plantById(pid) : null;
+          return <div key={`${x},${y}`} style={{ aspectRatio:'1', background:p?`oklch(0.62 0.1 ${p.hue})`:'rgba(31,42,27,0.06)', borderRadius:3 }} />;
+        }))}
+      </div>
+    );
+  }
+
   const shape = SHAPES[bed.shapeId] || SHAPES.rect;
   const maskFn = shape.id === 'freeform'
     ? (x, y) => !!( bed.customMask || {} )[`${x},${y}`]
@@ -82,6 +112,9 @@ function resolveCells(bed) {
 
 function calcFillPct(bed) {
   const cells = resolveCells(bed);
+  if (isNewCellFormat(cells)) {
+    return Math.min(100, Object.keys(cells).length * 4);
+  }
   const filled = Object.keys(cells).length;
   const shape = SHAPES[bed.shapeId] || SHAPES.rect;
   let totalCells = 0;
@@ -98,7 +131,7 @@ function calcFillPct(bed) {
 function BedCard({ bed, onClick, desktop, onDelete }) {
   const cells = resolveCells(bed);
   const filled = Object.keys(cells).length;
-  const pIds = [...new Set(Object.values(cells))].slice(0,5);
+  const pIds = [...new Set(Object.values(cells).map(v => typeof v === 'object' ? v.plantId : v).filter(Boolean))].slice(0,5);
   const pct = calcFillPct(bed);
   const [confirm, setConfirm] = useState(false);
 

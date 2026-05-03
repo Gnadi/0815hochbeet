@@ -24,34 +24,47 @@ function saveBedLocally(bedId, data) {
 
 function snapV(v) { return Math.round(v / SNAP_CM) * SNAP_CM; }
 
+// Max circles rendered per plant type — prevents tiny plants flooding the canvas.
+const MAX_PER_ZONE = 40;
+
 // Generates cm-based plant placements divided into equal vertical strips per plant type.
+// fitCols/fitRows/count are zone-based (not full-bed), so the breakdown table is accurate.
 function generatePlan(goal, picks, widthCm, depthCm) {
   const available = picks.map(id => plantById(id)).filter(Boolean);
   if (!available.length) return null;
 
-  const plantings = available.map(plant => {
-    const fitCols = Math.max(0, Math.floor(widthCm / plant.spacing_cm));
-    const fitRows = Math.max(0, Math.floor(depthCm / plant.spacing_cm));
+  // Pass 1 — filter to plants that fit at least 1 row in the full depth
+  let candidates = available.filter(plant =>
+    Math.floor(depthCm / plant.spacing_cm) > 0
+  );
+  if (!candidates.length) return null;
+
+  // Sort by goal before zone calculation so zone allocation matches the sorted order
+  if (goal === 'yield') candidates.sort((a, b) => b.yield - a.yield);
+  if (goal === 'easy')  candidates.sort((a, b) => (a.water==='low'?0:1) - (b.water==='low'?0:1));
+
+  // Pass 2 — zone-based counts (always at least 1 column per plant so no plant disappears)
+  const zoneW = widthCm / candidates.length;
+  const plantings = candidates.map(plant => {
+    const fitCols = Math.max(1, Math.floor(zoneW   / plant.spacing_cm));
+    const fitRows = Math.max(1, Math.floor(depthCm / plant.spacing_cm));
     return { plant, fitCols, fitRows, count: fitCols * fitRows };
-  }).filter(p => p.count > 0);
+  });
 
-  if (!plantings.length) return null;
-
-  if (goal === 'yield') plantings.sort((a, b) => b.plant.yield - a.plant.yield);
-  if (goal === 'easy')  plantings.sort((a, b) => (a.plant.water==='low'?0:1) - (b.plant.water==='low'?0:1));
-
+  // Build cells — subsample evenly if a zone would exceed MAX_PER_ZONE circles
   const cells = {};
-  plantings.forEach(({plant}, idx) => {
-    const zoneW  = widthCm / plantings.length;
+  plantings.forEach(({ plant, fitCols, fitRows }, idx) => {
     const xStart = idx * zoneW;
-    const zCols  = Math.floor(zoneW   / plant.spacing_cm);
-    const zRows  = Math.floor(depthCm / plant.spacing_cm);
-    for (let r = 0; r < zRows; r++) {
-      for (let c = 0; c < zCols; c++) {
+    const total  = fitCols * fitRows;
+    const step   = Math.ceil(total / MAX_PER_ZONE);
+    let placed   = 0;
+    for (let r = 0; r < fitRows && placed < MAX_PER_ZONE; r++) {
+      for (let c = 0; c < fitCols && placed < MAX_PER_ZONE; c++) {
+        if ((r * fitCols + c) % step !== 0) continue;
         const x = snapV(xStart + c * plant.spacing_cm + plant.spacing_cm / 2);
-        const y = snapV(r * plant.spacing_cm + plant.spacing_cm / 2);
+        const y = snapV(r       * plant.spacing_cm + plant.spacing_cm / 2);
         const key = `${x}_${y}`;
-        if (!cells[key]) cells[key] = { plantId:plant.id, x, y };
+        if (!cells[key]) { cells[key] = { plantId:plant.id, x, y }; placed++; }
       }
     }
   });

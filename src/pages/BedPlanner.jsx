@@ -201,6 +201,7 @@ export default function BedPlanner() {
           draggingPlant={selectedPlant}
           onCellPlace={(xCm, yCm, plantId) => bed.place(xCm, yCm, plantId)}
           onCellRemove={bed.remove}
+          onCellMove={bed.move}
         />
       </div>
 
@@ -409,6 +410,7 @@ export default function BedPlanner() {
             draggingPlant={draggingPlant}
             onCellPlace={(xCm, yCm, plantId) => bed.place(xCm, yCm, plantId)}
             onCellRemove={bed.remove}
+            onCellMove={bed.move}
           />
         </div>
 

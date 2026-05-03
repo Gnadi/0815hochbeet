@@ -105,6 +105,30 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     setSeasonCells(sc => { const n={...sc[season]}; delete n[key]; return {...sc,[season]:n}; });
   }
 
+  function move(fromKey, toX, toY) {
+    const item = cells[fromKey];
+    if (!item || typeof item !== 'object') return;
+    const { plantId } = item;
+    const p = plantById(plantId);
+    if (!p) return;
+    const r = p.spacing_cm / 2;
+    const bw = bedWidth || (shape.w * 25);
+    const bh = bedDepth || (shape.h * 25);
+    const cx = Math.max(r, Math.min(bw - r, snap(toX)));
+    const cy = Math.max(r, Math.min(bh - r, snap(toY)));
+    const toKey = `${cx}_${cy}`;
+    if (toKey === fromKey) return;
+    const withoutSelf = Object.fromEntries(Object.entries(cells).filter(([k]) => k !== fromKey));
+    if (!canPlace(cx, cy, plantId, withoutSelf)) return;
+    snapshot();
+    setSeasonCells(sc => {
+      const n = { ...sc[season] };
+      delete n[fromKey];
+      n[toKey] = { plantId, x: cx, y: cy };
+      return { ...sc, [season]: n };
+    });
+  }
+
   function clear() {
     snapshot();
     setSeasonCells(sc => ({ ...sc, [season]:{} }));
@@ -226,7 +250,7 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
   return {
     shape, shapeId, setShape:setShapeId,
     cells, seasonCells, loadSeasonCells,
-    place, remove, clear, canPlace,
+    place, remove, move, clear, canPlace,
     plantStatus,
     issues, wins,
     season, setSeason,

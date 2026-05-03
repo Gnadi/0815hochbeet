@@ -4,13 +4,15 @@ import { plantById, SNAP_CM } from '../data/plants';
 
 function snap(v) { return Math.round(v / SNAP_CM) * SNAP_CM; }
 
-export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, onCellRemove, readOnly=false }) {
+export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, onCellRemove, onCellMove, readOnly=false }) {
   const { cells, plantStatus, bedWidth, bedDepth } = bed;
   const bw = bedWidth || 120;
   const bh = bedDepth || 80;
   const containerRef = useRef(null);
   const [canvasW, setCanvasW] = useState(0);
   const [ghostPos, setGhostPos] = useState(null);
+  const [draggingKey, setDraggingKey] = useState(null);
+  const dragDidMoveRef = useRef(false);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -37,11 +39,17 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
   function handleDrop(e) {
     if (readOnly) return;
     e.preventDefault();
-    const plantId = e.dataTransfer.getData('plant');
-    if (!plantId) return;
+    const sourceKey = e.dataTransfer.getData('sourceKey');
     const pos = getCanvasCm(e.clientX, e.clientY);
-    if (pos) onCellPlace(pos.xCm, pos.yCm, plantId);
     setGhostPos(null);
+    setDraggingKey(null);
+    if (!pos) return;
+    if (sourceKey) {
+      onCellMove?.(sourceKey, pos.xCm, pos.yCm);
+    } else {
+      const plantId = e.dataTransfer.getData('plant');
+      if (plantId) onCellPlace(pos.xCm, pos.yCm, plantId);
+    }
   }
 
   function handleDragOver(e) {
@@ -57,7 +65,9 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
     if (pos) onCellPlace(pos.xCm, pos.yCm, draggingPlant);
   }
 
-  const ghostPlant = ghostPos && draggingPlant ? plantById(draggingPlant) : null;
+  // Ghost shows when dragging from sidebar OR when repositioning a placed plant
+  const ghostPlantId = draggingPlant || (draggingKey ? cells[draggingKey]?.plantId : null);
+  const ghostPlant = ghostPos && ghostPlantId ? plantById(ghostPlantId) : null;
 
   const snapDots = [];
   if (!readOnly && canvasW > 0) {
@@ -109,10 +119,27 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
           const cy = (y / bh) * canvasH;
           const status = showConflict ? plantStatus?.[key] : null;
           const ring = status?.status === 'bad' ? T.bad : status?.status === 'good' ? T.good : null;
+          const isBeingDragged = draggingKey === key;
           return (
             <div
               key={key}
-              onClick={readOnly ? undefined : (e) => { e.stopPropagation(); onCellRemove(key); }}
+              draggable={!readOnly}
+              onDragStart={readOnly ? undefined : (e) => {
+                e.stopPropagation();
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('sourceKey', key);
+                dragDidMoveRef.current = false;
+                setDraggingKey(key);
+              }}
+              onDragEnd={() => {
+                setDraggingKey(null);
+                setGhostPos(null);
+              }}
+              onClick={readOnly ? undefined : (e) => {
+                e.stopPropagation();
+                // dragDidMoveRef guards against spurious click-after-drag on some browsers
+                if (!dragDidMoveRef.current) onCellRemove(key);
+              }}
               style={{
                 position:'absolute',
                 width:d, height:d,
@@ -123,10 +150,11 @@ export function BedCanvas({ bed, showConflict=true, draggingPlant, onCellPlace, 
                   ? `0 0 0 3px ${ring}, 0 3px 10px -2px rgba(0,0,0,0.35)`
                   : '0 3px 10px -2px rgba(0,0,0,0.25)',
                 display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                cursor: readOnly ? 'default' : 'pointer',
+                cursor: readOnly ? 'default' : 'grab',
                 pointerEvents: readOnly ? 'none' : 'auto',
-                transition:'box-shadow 0.2s',
+                transition:'box-shadow 0.2s, opacity 0.15s',
                 userSelect:'none',
+                opacity: isBeingDragged ? 0.3 : 1,
               }}
             >
               {d > 22 && (

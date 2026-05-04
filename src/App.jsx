@@ -10,6 +10,8 @@ import AutoPlan from './pages/AutoPlan';
 import CalendarPage from './pages/CalendarPage';
 import PlantsPage from './pages/PlantsPage';
 import BeetsOverview from './pages/BeetsOverview';
+import ForumPage from './pages/ForumPage';
+import ForumQuestionPage from './pages/ForumQuestionPage';
 import './index.css';
 
 function Guard({ children }) {
@@ -38,6 +40,8 @@ function AppRoutes() {
       <Route path="/calendar" element={<Guard><CalendarPage /></Guard>} />
       <Route path="/plants" element={<Guard><PlantsPage /></Guard>} />
       <Route path="/beds" element={<Guard><BeetsOverview /></Guard>} />
+      <Route path="/forum" element={<Guard><ForumPage /></Guard>} />
+      <Route path="/forum/question/:questionId" element={<Guard><ForumQuestionPage /></Guard>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

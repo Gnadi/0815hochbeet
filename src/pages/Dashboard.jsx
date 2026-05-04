@@ -281,6 +281,23 @@ export default function Dashboard() {
           <div style={{ fontSize:13, color:T.inkMute, fontWeight:500 }}>+ Neu</div>
         </div>
       </div>
+      {user && (
+        <div
+          onClick={() => navigate('/forum')}
+          style={{
+            margin: '12px 16px 0', background: T.panel, border: `1px solid ${T.border}`,
+            borderRadius: 14, padding: '12px 16px', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 12,
+          }}
+        >
+          <span style={{ fontSize: 22 }}>◈</span>
+          <div>
+            <div style={{ fontFamily: 'Fraunces,serif', fontSize: 15, fontWeight: 600, color: T.ink }}>Garten-Forum</div>
+            <div style={{ fontSize: 12, color: T.inkDim }}>Fragen stellen & mit anderen Gärtnern austauschen</div>
+          </div>
+          <span style={{ marginLeft: 'auto', color: T.green, fontSize: 16 }}>→</span>
+        </div>
+      )}
       <TabBar active="home" />
     </div>
   );
@@ -368,6 +385,26 @@ export default function Dashboard() {
               );
             })}
           </div>
+          {user && (
+            <div
+              onClick={() => navigate('/forum')}
+              style={{
+                marginTop: 24, background: T.panel, border: `1px solid ${T.border}`,
+                borderRadius: 14, padding: '14px 20px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 14,
+                transition: 'box-shadow 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.boxShadow = '0 4px 16px -4px rgba(31,42,27,0.12)'}
+              onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
+            >
+              <span style={{ fontSize: 26 }}>◈</span>
+              <div>
+                <div style={{ fontFamily: 'Fraunces,serif', fontSize: 17, fontWeight: 600, color: T.ink }}>Garten-Forum</div>
+                <div style={{ fontSize: 13, color: T.inkDim }}>Fragen stellen & mit anderen Gärtnern austauschen</div>
+              </div>
+              <span style={{ marginLeft: 'auto', color: T.green, fontWeight: 600, fontSize: 14 }}>Forum öffnen →</span>
+            </div>
+          )}
         </div>
       </div>
       {showAuth && <AuthModal onClose={()=>setShowAuth(false)} />}

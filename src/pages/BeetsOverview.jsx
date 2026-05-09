@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { T } from '../theme';
 import { plantById, SHAPES } from '../data/plants';
+import { getRotationAnalysis } from '../utils/rotationAdvice';
 import { TabBar } from '../components/TabBar';
 import { Btn, TrashIcon } from '../components/Btn';
 
@@ -92,6 +93,18 @@ function MiniGrid({ bed }) {
   );
 }
 
+function RotationBadge({ bed }) {
+  const { score, warnings } = getRotationAnalysis(bed.seasonCells || {});
+  if (!bed.seasonCells || !Object.values(bed.seasonCells).some(sc => Object.keys(sc || {}).length > 0)) return null;
+  const color = score >= 75 ? T.good : score >= 50 ? T.ochre : T.bad;
+  const label = score >= 75 ? '✓ Fruchtfolge ok' : score >= 50 ? '↻ Fruchtfolge prüfen' : '⚠ Fruchtfolge';
+  return (
+    <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:9, color, fontWeight:600, marginTop:8 }}>
+      {label}{warnings.length > 0 ? ` · ${warnings.length} Hinweis${warnings.length > 1 ? 'e' : ''}` : ''}
+    </div>
+  );
+}
+
 function BedCard({ bed, onClick, desktop, onDelete }) {
   const cells = resolveCells(bed);
   const pIds = [...new Set(Object.values(cells).map(v => typeof v === 'object' ? v.plantId : v).filter(Boolean))].slice(0, 5);
@@ -129,6 +142,7 @@ function BedCard({ bed, onClick, desktop, onDelete }) {
           return p ? <div key={k} style={{ width:24, height:24, borderRadius:12, background:`oklch(0.62 0.1 ${p.hue})`, border:`2px solid ${T.panel}`, marginLeft:k > 0 ? -8 : 0, fontFamily:'Fraunces,serif', fontStyle:'italic', color:'#fff', fontSize:12, display:'flex', alignItems:'center', justifyContent:'center' }}>{p.glyph[0]}</div> : null;
         })}
       </div>
+      <RotationBadge bed={bed} />
     </div>
   );
 }

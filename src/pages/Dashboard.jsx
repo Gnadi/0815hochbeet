@@ -7,6 +7,8 @@ import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useWeather } from '../hooks/useWeather';
 import { T } from '../theme';
 import { plantById, SHAPES } from '../data/plants';
+import { getWeatherAdvice } from '../utils/weatherAdvice';
+import { getRotationAnalysis } from '../utils/rotationAdvice';
 import { TabBar } from '../components/TabBar';
 import { AuthModal } from '../components/AuthModal';
 import { Btn, TrashIcon } from '../components/Btn';
@@ -128,6 +130,18 @@ function calcFillPct(bed) {
   return totalCells ? Math.round(filled / totalCells * 100) : 0;
 }
 
+function RotationBadge({ bed }) {
+  const { score, warnings } = getRotationAnalysis(bed.seasonCells || {});
+  if (!bed.seasonCells || !Object.values(bed.seasonCells).some(sc => Object.keys(sc || {}).length > 0)) return null;
+  const color = score >= 75 ? T.good : score >= 50 ? T.ochre : T.bad;
+  const label = score >= 75 ? '✓ Fruchtfolge ok' : score >= 50 ? '↻ Fruchtfolge prüfen' : '⚠ Fruchtfolge';
+  return (
+    <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:9, color, fontWeight:600, marginTop:8 }}>
+      {label}{warnings.length > 0 ? ` · ${warnings.length} Hinweis${warnings.length > 1 ? 'e' : ''}` : ''}
+    </div>
+  );
+}
+
 function BedCard({ bed, onClick, desktop, onDelete }) {
   const cells = resolveCells(bed);
   const filled = Object.keys(cells).length;
@@ -166,6 +180,7 @@ function BedCard({ bed, onClick, desktop, onDelete }) {
           return p ? <div key={k} style={{ width:24, height:24, borderRadius:12, background:`oklch(0.62 0.1 ${p.hue})`, border:`2px solid ${T.panel}`, marginLeft:k>0?-8:0, fontFamily:'Fraunces,serif', fontStyle:'italic', color:'#fff', fontSize:12, display:'flex', alignItems:'center', justifyContent:'center' }}>{p.glyph[0]}</div> : null;
         })}
       </div>
+      <RotationBadge bed={bed} />
     </div>
   );
 }
@@ -189,6 +204,27 @@ export default function Dashboard() {
       })
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [todos]);
+
+  const allPlantedIds = useMemo(() => {
+    const ids = new Set();
+    beds.forEach(bed => {
+      Object.values(bed.seasonCells || {}).forEach(sc => {
+        Object.values(sc || {}).forEach(v => {
+          if (typeof v === 'object' && v.plantId) ids.add(v.plantId);
+        });
+      });
+      Object.values(bed.cells || {}).forEach(v => {
+        if (typeof v === 'object' && v.plantId) ids.add(v.plantId);
+        else if (typeof v === 'string') ids.add(v);
+      });
+    });
+    return [...ids];
+  }, [beds]);
+
+  const weatherAdvice = useMemo(
+    () => getWeatherAdvice(weather.forecast, allPlantedIds),
+    [weather.forecast, allPlantedIds]
+  );
 
   const dateStr = new Intl.DateTimeFormat('de-DE', { weekday:'short', day:'2-digit', month:'long' }).format(new Date());
 
@@ -244,6 +280,20 @@ export default function Dashboard() {
           ✦ Plan generieren
         </Btn>
       </div>
+
+      {weatherAdvice.length > 0 && (
+        <div style={{ padding:'0 16px 12px', display:'flex', flexDirection:'column', gap:8 }}>
+          {weatherAdvice.map((a, i) => (
+            <div key={i} style={{ background:a.bg, border:`1px solid ${a.border}`, borderRadius:14, padding:'12px 14px', display:'flex', alignItems:'flex-start', gap:12 }}>
+              <div style={{ fontSize:18, lineHeight:1, flexShrink:0, marginTop:1 }}>{a.icon}</div>
+              <div>
+                <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:700, color:a.color, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:3 }}>{a.title}</div>
+                <div style={{ fontSize:12, color:'rgba(31,42,27,0.75)', lineHeight:1.5 }}>{a.text}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ padding:'0 20px 8px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
         <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Diese Woche</div>
@@ -330,6 +380,21 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
+
+          {/* Weather advice cards */}
+          {weatherAdvice.length > 0 && (
+            <div style={{ display:'grid', gridTemplateColumns:`repeat(${weatherAdvice.length},1fr)`, gap:12, marginBottom:22 }}>
+              {weatherAdvice.map((a, i) => (
+                <div key={i} style={{ background:a.bg, border:`1px solid ${a.border}`, borderRadius:18, padding:'16px 18px', display:'flex', alignItems:'flex-start', gap:14, boxShadow:'0 1px 0 rgba(31,42,27,0.04)' }}>
+                  <div style={{ fontSize:22, lineHeight:1, flexShrink:0, marginTop:2 }}>{a.icon}</div>
+                  <div>
+                    <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:700, color:a.color, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:4 }}>{a.title}</div>
+                    <div style={{ fontSize:13, color:'rgba(31,42,27,0.72)', lineHeight:1.55 }}>{a.text}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Beds grid */}
           <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute, marginBottom:12 }}>Meine Beete · {beds.length}</div>

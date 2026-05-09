@@ -8,6 +8,7 @@ import { useBed } from '../hooks/useBed';
 import { useHarvestLog } from '../hooks/useHarvestLog';
 import { T } from '../theme';
 import { PLANTS, SEASONS, SHAPES, plantById, companionReason } from '../data/plants';
+import { generatePlan, GOALS } from '../utils/generatePlan';
 import { getRotationAnalysis } from '../utils/rotationAdvice';
 import { PlantTile } from '../components/PlantTile';
 import { BedCanvas } from '../components/BedCanvas';
@@ -23,6 +24,74 @@ function saveBedLocally(bedId, data) {
     const existing = JSON.parse(localStorage.getItem(`hb_bed_${bedId}`) || '{}');
     localStorage.setItem(`hb_bed_${bedId}`, JSON.stringify({ ...existing, ...data, updatedAt:new Date().toISOString() }));
   } catch {}
+}
+
+function GenerateModal({ goal, setGoal, picks, togglePick, plan, step, onGenerate, onApply, onBack, onClose, bedWidth, bedDepth }) {
+  const previewBed = plan ? { cells:plan.cells, plantStatus:{}, bedWidth, bedDepth } : null;
+  return (
+    <>
+      <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(31,42,27,0.5)', zIndex:200 }} />
+      <div style={{ position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:210, background:'#fff', borderRadius:20, padding:'28px 28px 24px', width:Math.min(520, window.innerWidth - 32), maxHeight:'90vh', overflowY:'auto', boxShadow:'0 8px 48px -8px rgba(31,42,27,0.35)', border:`1px solid ${T.border}` }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:22 }}>
+          <div style={{ fontFamily:'Fraunces,serif', fontSize:22, fontWeight:500 }}>✦ <em style={{ color:T.green, fontStyle:'italic' }}>Beet generieren</em></div>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', fontSize:18, color:T.inkMute, lineHeight:1, padding:'4px 6px' }}>×</button>
+        </div>
+
+        {step === 1 && (
+          <>
+            <div style={{ ...LABEL, marginBottom:8 }}>Ziel</div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:22 }}>
+              {GOALS.map(g => (
+                <button key={g.id} onClick={()=>setGoal(g.id)} style={{ padding:'12px 8px', textAlign:'left', cursor:'pointer', background:goal===g.id?'rgba(107,142,78,0.08)':'rgba(31,42,27,0.03)', border:`${goal===g.id?2:1}px solid ${goal===g.id?T.green:T.border}`, borderRadius:12, transition:'all 0.15s', fontFamily:'inherit' }}>
+                  <div style={{ fontFamily:'Fraunces,serif', fontSize:13, fontWeight:500, color:goal===g.id?T.green:T.ink, marginBottom:3 }}>{g.de}</div>
+                  <div style={{ fontSize:9, color:T.inkDim, lineHeight:1.4 }}>{g.desc}</div>
+                </button>
+              ))}
+            </div>
+            <div style={{ ...LABEL, marginBottom:10 }}>Pflanzen · {picks.length} ausgewählt</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:6, marginBottom:24 }}>
+              {PLANTS.map(p => (
+                <button key={p.id} onClick={()=>togglePick(p.id)} style={{ padding:7, borderRadius:10, background:picks.includes(p.id)?'#fff':'rgba(31,42,27,0.03)', border:`1.5px solid ${picks.includes(p.id)?T.green:T.border}`, cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:4, transition:'all 0.15s', fontFamily:'inherit' }}>
+                  <PlantTile plant={p} size={28} showLabel={false} draggable={false} />
+                  <div style={{ fontSize:8, fontWeight:600, textAlign:'center', lineHeight:1.2 }}>{p.de}</div>
+                </button>
+              ))}
+            </div>
+            <button onClick={onGenerate} disabled={picks.length === 0} style={{ width:'100%', padding:'12px 20px', borderRadius:999, background:picks.length?T.green:'rgba(31,42,27,0.12)', color:picks.length?'#fff':T.inkMute, border:'none', cursor:picks.length?'pointer':'default', fontSize:14, fontWeight:600, fontFamily:'inherit', transition:'all 0.15s' }}>
+              Plan generieren ✦
+            </button>
+          </>
+        )}
+
+        {step === 2 && plan && previewBed && (
+          <>
+            <BedCanvas bed={previewBed} readOnly showConflict={false} />
+            <div style={{ display:'flex', gap:8, margin:'14px 0' }}>
+              <Chip style={{ flex:1, justifyContent:'center' }}>Ertrag <strong style={{ ...MONO, color:T.green, marginLeft:4 }}>~{plan.yieldKg.toFixed(1)} kg</strong></Chip>
+              <Chip style={{ flex:1, justifyContent:'center' }}>Pflege <strong style={{ ...MONO, color:T.green, marginLeft:4 }}>{plan.careHours}h/Wo</strong></Chip>
+            </div>
+            <div style={{ background:'rgba(31,42,27,0.03)', border:`1px solid ${T.border}`, borderRadius:12, overflow:'hidden', marginBottom:16 }}>
+              {plan.plantings.map(({ plant, fitCols, fitRows, count }, idx) => (
+                <div key={plant.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderBottom: idx < plan.plantings.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+                  <PlantTile plant={plant} size={24} showLabel={false} draggable={false} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:12, fontWeight:600 }}>{plant.de}</div>
+                    <div style={{ fontSize:10, color:T.inkMute, ...MONO }}>{plant.spacing_cm} cm</div>
+                  </div>
+                  <div style={{ ...MONO, fontSize:13, fontWeight:700, color:T.green }}>{count}×</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize:12, color:T.inkDim, lineHeight:1.6, marginBottom:20 }}>{plan.description}</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={onBack} style={{ flex:1, padding:'11px 16px', borderRadius:999, background:'rgba(31,42,27,0.05)', color:T.ink, border:`1px solid ${T.border}`, cursor:'pointer', fontSize:13, fontWeight:500, fontFamily:'inherit' }}>← Zurück</button>
+              <button onClick={onApply} style={{ flex:2, padding:'11px 20px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:13, fontWeight:600, fontFamily:'inherit' }}>Anwenden →</button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
 }
 
 export default function BedPlanner() {
@@ -47,11 +116,31 @@ export default function BedPlanner() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [harvestPlant, setHarvestPlant] = useState('');
   const [harvestAmount, setHarvestAmount] = useState('');
+  const [showGenModal, setShowGenModal] = useState(false);
+  const [genGoal, setGenGoal] = useState('family');
+  const [genPicks, setGenPicks] = useState(['tomato','basil','carrot','lettuce','bean']);
+  const [genPlan, setGenPlan] = useState(null);
+  const [genStep, setGenStep] = useState(1);
   const notesTimer = useRef(null);
   const saveTimer = useRef(null);
   const [bedName, setBedName] = useState('Mein Hochbeet');
   const touchDragRef = useRef({ active:false, plantId:null });
   const [touchGhost, setTouchGhost] = useState(null);
+
+  function openGenModal() { setGenStep(1); setGenPlan(null); setShowGenModal(true); }
+  function closeGenModal() { setShowGenModal(false); setGenPlan(null); setGenStep(1); }
+  function toggleGenPick(id) { setGenPicks(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]); }
+  function runGenerate() {
+    const w = initialData?.width || bed.bedWidth || 120;
+    const d = initialData?.depth || bed.bedDepth || 80;
+    const result = generatePlan(genGoal, genPicks, w, d);
+    if (result) { setGenPlan(result); setGenStep(2); }
+  }
+  function applyGenPlan() {
+    if (!genPlan) return;
+    bed.applySeasonCells(genPlan.cells);
+    closeGenModal();
+  }
 
   function startTouchDrag(plantId, e) {
     e.preventDefault();
@@ -176,7 +265,8 @@ export default function BedPlanner() {
         </div>
         <div style={{ display:'flex', gap:6 }}>
           <button onClick={bed.undo} disabled={!bed.canUndo} style={{ width:36, height:36, borderRadius:18, background:T.panel, border:`1px solid ${T.border}`, fontSize:14, cursor:'pointer', opacity:bed.canUndo?1:0.4 }}>↶</button>
-          <button onClick={bed.fixBed} style={{ width:36, height:36, borderRadius:18, background:T.terra, border:'none', color:'#fff', fontSize:13, cursor:'pointer' }}>✦</button>
+          <button onClick={openGenModal} style={{ width:36, height:36, borderRadius:18, background:T.green, border:'none', color:'#fff', fontSize:13, cursor:'pointer' }}>✦</button>
+          <button onClick={bed.fixBed} style={{ width:36, height:36, borderRadius:18, background:T.terra, border:'none', color:'#fff', fontSize:13, cursor:'pointer' }}>⚙</button>
           {confirmDelete
             ? <button onClick={deleteBed} style={{ height:36, padding:'0 12px', borderRadius:18, background:'rgba(201,84,58,0.12)', border:`1px solid rgba(201,84,58,0.4)`, color:T.bad, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>Löschen?</button>
             : <button onClick={()=>setConfirmDelete(true)} style={{ width:36, height:36, borderRadius:18, background:T.panel, border:`1px solid ${T.border}`, cursor:'pointer', color:T.inkMute, display:'flex', alignItems:'center', justifyContent:'center' }}><TrashIcon size={14} /></button>
@@ -306,6 +396,7 @@ export default function BedPlanner() {
           </div>
         );
       })()}
+      {showGenModal && <GenerateModal goal={genGoal} setGoal={setGenGoal} picks={genPicks} togglePick={toggleGenPick} plan={genPlan} step={genStep} onGenerate={runGenerate} onApply={applyGenPlan} onBack={()=>setGenStep(1)} onClose={closeGenModal} bedWidth={initialData?.width||bed.bedWidth||120} bedDepth={initialData?.depth||bed.bedDepth||80} />}
       <TabBar active="beds" />
     </div>
   );
@@ -389,7 +480,8 @@ export default function BedPlanner() {
             <Btn onClick={bed.undo} disabled={!bed.canUndo} title="Rückgängig">↶</Btn>
             <Btn onClick={bed.redo} disabled={!bed.canRedo} title="Wiederholen">↷</Btn>
             <Btn onClick={()=>setShowSun(s=>!s)} style={{ background:showSun?T.ochre:T.panel, color:showSun?'#fff':T.ink, border:'none' }}>☀ Sonne</Btn>
-            <Btn onClick={bed.fixBed} variant="terra">✦ Fix my bed</Btn>
+            <Btn onClick={openGenModal} variant="primary">✦ Generieren</Btn>
+            <Btn onClick={bed.fixBed} variant="terra">⚙ Fix my bed</Btn>
             <Btn onClick={()=>navigate(`/bed/${bedId}/seasons`)}>🗓 Saison</Btn>
             {confirmDelete
               ? <><Btn onClick={deleteBed} style={{ background:'rgba(201,84,58,0.12)', color:T.bad, borderColor:'rgba(201,84,58,0.4)' }}>Ja, löschen</Btn><Btn onClick={()=>setConfirmDelete(false)}>Abbrechen</Btn></>
@@ -633,6 +725,7 @@ export default function BedPlanner() {
         </div>
       );
     })()}
+    {showGenModal && <GenerateModal goal={genGoal} setGoal={setGenGoal} picks={genPicks} togglePick={toggleGenPick} plan={genPlan} step={genStep} onGenerate={runGenerate} onApply={applyGenPlan} onBack={()=>setGenStep(1)} onClose={closeGenModal} bedWidth={initialData?.width||bed.bedWidth||120} bedDepth={initialData?.depth||bed.bedDepth||80} />}
     </>
   );
 }

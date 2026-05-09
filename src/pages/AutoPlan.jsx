@@ -5,11 +5,12 @@ import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { T } from '../theme';
-import { PLANTS, SNAP_CM, plantById } from '../data/plants';
+import { PLANTS, plantById } from '../data/plants';
 import { PlantTile } from '../components/PlantTile';
 import { BedCanvas } from '../components/BedCanvas';
 import { Btn } from '../components/Btn';
 import { Chip } from '../components/Chip';
+import { generatePlan, GOALS } from '../utils/generatePlan';
 
 const MONO = { fontFamily:'JetBrains Mono,monospace' };
 const LABEL = { ...MONO, fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute };
@@ -21,77 +22,6 @@ function saveBedLocally(bedId, data) {
   if (!ids.includes(bedId)) ids.push(bedId);
   localStorage.setItem('hb_beds', JSON.stringify(ids));
 }
-
-function snapV(v) { return Math.round(v / SNAP_CM) * SNAP_CM; }
-
-// Max circles rendered per plant type in the preview canvas.
-// Each circle represents multiple plants — the real count is shown in the breakdown.
-const MAX_PER_ZONE = 10;
-
-// Generates cm-based plant placements divided into equal vertical strips per plant type.
-// fitCols/fitRows/count are zone-based (not full-bed), so the breakdown table is accurate.
-function generatePlan(goal, picks, widthCm, depthCm) {
-  const available = picks.map(id => plantById(id)).filter(Boolean);
-  if (!available.length) return null;
-
-  // Pass 1 — filter to plants that fit at least 1 row in the full depth
-  let candidates = available.filter(plant =>
-    Math.floor(depthCm / plant.spacing_cm) > 0
-  );
-  if (!candidates.length) return null;
-
-  // Sort by goal before zone calculation so zone allocation matches the sorted order
-  if (goal === 'yield') candidates.sort((a, b) => b.yield - a.yield);
-  if (goal === 'easy')  candidates.sort((a, b) => (a.water==='low'?0:1) - (b.water==='low'?0:1));
-
-  // Pass 2 — zone-based counts (always at least 1 column per plant so no plant disappears)
-  const zoneW = widthCm / candidates.length;
-  const plantings = candidates.map(plant => {
-    const fitCols = Math.max(1, Math.floor(zoneW   / plant.spacing_cm));
-    const fitRows = Math.max(1, Math.floor(depthCm / plant.spacing_cm));
-    return { plant, fitCols, fitRows, count: fitCols * fitRows };
-  });
-
-  // Build cells — subsample evenly if a zone would exceed MAX_PER_ZONE circles
-  const cells = {};
-  plantings.forEach(({ plant, fitCols, fitRows }, idx) => {
-    const xStart     = idx * zoneW;
-    const total      = fitCols * fitRows;
-    const show       = Math.min(total, MAX_PER_ZONE);
-    const perCircle  = Math.ceil(total / show);   // how many real plants each dot represents
-    const step       = Math.ceil(total / show);
-    let placed       = 0;
-    for (let r = 0; r < fitRows && placed < show; r++) {
-      for (let c = 0; c < fitCols && placed < show; c++) {
-        if ((r * fitCols + c) % step !== 0) continue;
-        const x = snapV(xStart + c * plant.spacing_cm + plant.spacing_cm / 2);
-        const y = snapV(r       * plant.spacing_cm + plant.spacing_cm / 2);
-        const key = `${x}_${y}`;
-        if (!cells[key]) { cells[key] = { plantId:plant.id, x, y, count:perCircle }; placed++; }
-      }
-    }
-  });
-
-  const totalCount = plantings.reduce((s,p) => s + p.count, 0);
-  const yieldKg   = plantings.reduce((s, {plant, count}) => s + plant.yield * count, 0);
-  const careHours = goal==='easy' ? 1.5 : goal==='yield' ? 3 : 2;
-  const usedPlants = plantings.map(p => p.plant);
-  const names = usedPlants.slice(0,3).map(p => p.de).join(', ');
-
-  const desc = goal==='yield'
-    ? `Ertragsoptimiert: ${names} und mehr. Volle Nutzung aller Sonnenstunden.`
-    : goal==='easy'
-    ? `Pflegeleicht: Trockenheitsverträgliche Pflanzen wie ${names}. Wenig Pflege nötig.`
-    : `Familienfreundlich: Abwechslungsreiche Ernte mit ${names}. Ideal für Kinder.`;
-
-  return { cells, plantings, totalCount, yieldKg, careHours, description:desc, usedPlants };
-}
-
-const GOALS = [
-  { id:'easy',   de:'Einfach',      desc:'Wenig Pflege — ideal für Einsteiger.' },
-  { id:'yield',  de:'Hoher Ertrag', desc:'Maximale Ernte auf minimaler Fläche.' },
-  { id:'family', de:'Familie',      desc:'Abwechslungsreich & kinderfreundlich.' },
-];
 
 export default function AutoPlan() {
   const navigate = useNavigate();

@@ -251,6 +251,24 @@ export default function Dashboard() {
 
   const weatherStr = weather.error ? '' : weather.loading ? '…' : `${weather.temp}° ${weather.description}`;
 
+  if (mobile && beds.length === 0) return (
+    <div style={{ height:'100%', background:T.bg, paddingTop:56, paddingBottom:100, overflow:'auto', position:'relative', display:'flex', flexDirection:'column' }}>
+      <div style={{ padding:'8px 20px 16px' }}>
+        <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute, marginBottom:4 }}>{dateStr}</div>
+        <h1 style={{ fontFamily:'Fraunces,serif', fontSize:30, margin:0, fontWeight:500, lineHeight:1.1 }}>{greeting()},<br/><em style={{ color:T.green, fontStyle:'italic' }}>{user?.displayName || 'Gärtner'}</em>.</h1>
+      </div>
+      <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'0 32px 40px', textAlign:'center' }}>
+        <div style={{ fontFamily:'Fraunces,serif', fontSize:64, color:T.green, lineHeight:1, marginBottom:20, fontStyle:'italic' }}>~</div>
+        <h2 style={{ fontFamily:'Fraunces,serif', fontSize:26, fontWeight:500, margin:'0 0 10px', lineHeight:1.2 }}>Du hast noch kein Beet.</h2>
+        <p style={{ fontSize:14, color:T.inkMute, lineHeight:1.6, margin:'0 0 32px' }}>Leg jetzt dein erstes Hochbeet an und plane deine Saison.</p>
+        <button onClick={()=>navigate('/onboarding')} style={{ padding:'14px 28px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:15, fontWeight:600, fontFamily:'inherit' }}>
+          Erstes Beet anlegen →
+        </button>
+      </div>
+      <TabBar active="home" />
+    </div>
+  );
+
   if (mobile) return (
     <div style={{ height:'100%', background:T.bg, paddingTop:56, paddingBottom:100, overflow:'auto', position:'relative' }}>
       <div style={{ padding:'8px 20px 16px' }}>
@@ -333,6 +351,35 @@ export default function Dashboard() {
       </div>
       <TabBar active="home" />
     </div>
+  );
+
+  // Desktop — empty state
+  if (beds.length === 0) return (
+    <>
+      <div style={{ minHeight:'100vh', background:T.bg, display:'flex', flexDirection:'column' }}>
+        <div style={{ padding:'28px 32px 0', display:'flex', justifyContent:'flex-end', gap:8 }}>
+          {user ? (
+            <Btn onClick={logout} variant="ghost" style={{ fontSize:12 }}>Abmelden</Btn>
+          ) : (
+            <Btn onClick={()=>setShowAuth(true)} variant="ghost">Anmelden</Btn>
+          )}
+        </div>
+        <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', textAlign:'center', padding:'0 40px 80px' }}>
+          <div style={{ fontFamily:'Fraunces,serif', fontSize:80, color:T.green, lineHeight:1, marginBottom:24, fontStyle:'italic' }}>~</div>
+          <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, textTransform:'uppercase', letterSpacing:'0.12em', color:T.inkMute, marginBottom:12 }}>{dateStr}</div>
+          <h1 style={{ fontFamily:'Fraunces,serif', fontSize:52, fontWeight:500, margin:'0 0 16px', lineHeight:1.1 }}>
+            {greeting()}, <em style={{ color:T.green, fontStyle:'italic' }}>{user?.displayName || 'Gärtner'}</em>.
+          </h1>
+          <p style={{ fontSize:16, color:T.inkMute, lineHeight:1.65, maxWidth:440, margin:'0 0 40px' }}>
+            Du hast noch kein Beet. Leg jetzt dein erstes Hochbeet an und plane deine gesamte Saison.
+          </p>
+          <Btn onClick={()=>navigate('/onboarding')} variant="primary" style={{ fontSize:15, padding:'14px 32px' }}>
+            Erstes Beet anlegen →
+          </Btn>
+        </div>
+      </div>
+      {showAuth && <AuthModal onClose={()=>setShowAuth(false)} />}
+    </>
   );
 
   // Desktop

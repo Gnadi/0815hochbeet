@@ -7,7 +7,7 @@ const WEATHER_DE = {
   'light rain':'Leichter Regen','moderate rain':'Mäßiger Regen',
 };
 export function useWeather() {
-  const [state, setState] = useState({ temp:null, description:'', icon:'', city:'', loading:true, error:null });
+  const [state, setState] = useState({ temp:null, description:'', icon:'', city:'', forecast:null, loading:true, error:null });
   useEffect(() => {
     if (!API_KEY || API_KEY === 'placeholder' || !navigator.geolocation) {
       setState(s=>({...s,loading:false,error:'no-key'}));
@@ -16,10 +16,15 @@ export function useWeather() {
     navigator.geolocation.getCurrentPosition(async pos => {
       try {
         const { latitude: lat, longitude: lon } = pos.coords;
-        const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&appid=${API_KEY}`);
+        const base = `lat=${lat}&lon=${lon}&units=metric&appid=${API_KEY}`;
+        const [res, forecastRes] = await Promise.all([
+          fetch(`https://api.openweathermap.org/data/2.5/weather?${base}`),
+          fetch(`https://api.openweathermap.org/data/2.5/forecast?${base}&cnt=16`),
+        ]);
         const d = await res.json();
+        const forecast = await forecastRes.json();
         const desc = d.weather?.[0]?.description || '';
-        setState({ temp:Math.round(d.main?.temp), description:WEATHER_DE[desc]||desc, icon:d.weather?.[0]?.icon, city:d.name, loading:false, error:null });
+        setState({ temp:Math.round(d.main?.temp), description:WEATHER_DE[desc]||desc, icon:d.weather?.[0]?.icon, city:d.name, forecast, loading:false, error:null });
       } catch { setState(s=>({...s,loading:false,error:'fetch-failed'})); }
     }, () => setState(s=>({...s,loading:false,error:'geo-denied'})));
   }, []);

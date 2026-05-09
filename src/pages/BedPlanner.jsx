@@ -5,8 +5,10 @@ import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useBed } from '../hooks/useBed';
+import { useHarvestLog } from '../hooks/useHarvestLog';
 import { T } from '../theme';
 import { PLANTS, SEASONS, SHAPES, plantById, companionReason } from '../data/plants';
+import { getRotationAnalysis } from '../utils/rotationAdvice';
 import { PlantTile } from '../components/PlantTile';
 import { BedCanvas } from '../components/BedCanvas';
 import { TabBar } from '../components/TabBar';
@@ -35,6 +37,7 @@ export default function BedPlanner() {
     try { return !!localStorage.getItem(`hb_bed_${bedId}`); } catch { return false; }
   });
   const bed = useBed(initialData?.shapeId || 'rect', initialData?.width, initialData?.depth);
+  const { entries: harvestEntries, addEntry: addHarvest, deleteEntry: deleteHarvest, entriesForBed } = useHarvestLog();
   const [draggingPlant, setDraggingPlant] = useState(null);
   const [showSun, setShowSun] = useState(false);
   const [activeTab, setActiveTab] = useState('plants');
@@ -42,6 +45,8 @@ export default function BedPlanner() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selectedPlant, setSelectedPlant] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [harvestPlant, setHarvestPlant] = useState('');
+  const [harvestAmount, setHarvestAmount] = useState('');
   const notesTimer = useRef(null);
   const saveTimer = useRef(null);
   const [bedName, setBedName] = useState('Mein Hochbeet');
@@ -426,47 +431,71 @@ export default function BedPlanner() {
       {/* RIGHT PANEL */}
       <aside style={{ borderLeft:`1px solid ${T.border}`, padding:20, overflow:'auto', background:T.paper, scrollbarWidth:'thin' }}>
         <div style={{ display:'flex', gap:4, marginBottom:18, padding:4, background:T.bg, borderRadius:12, border:`1px solid ${T.border}` }}>
-          {[{id:'plants',label:'Tipps'},{id:'issues',label:'Konflikte'},{id:'care',label:'Pflege'}].map(t => (
-            <button key={t.id} onClick={()=>setActiveTab(t.id)} style={{ flex:1, padding:'8px 4px', border:'none', borderRadius:8, background:activeTab===t.id?'#fff':'transparent', boxShadow:activeTab===t.id?'0 1px 3px rgba(0,0,0,0.06)':'none', color:activeTab===t.id?T.ink:T.inkMute, cursor:'pointer', fontSize:12, fontWeight:600, fontFamily:'inherit' }}>{t.label}</button>
+          {[{id:'plants',label:'Tipps'},{id:'issues',label:'Konflikte'},{id:'care',label:'Pflege'},{id:'harvest',label:'Ernte'}].map(t => (
+            <button key={t.id} onClick={()=>setActiveTab(t.id)} style={{ flex:1, padding:'8px 2px', border:'none', borderRadius:8, background:activeTab===t.id?'#fff':'transparent', boxShadow:activeTab===t.id?'0 1px 3px rgba(0,0,0,0.06)':'none', color:activeTab===t.id?T.ink:T.inkMute, cursor:'pointer', fontSize:11, fontWeight:600, fontFamily:'inherit' }}>{t.label}</button>
           ))}
         </div>
 
-        {activeTab==='issues' && (
-          <div>
-            {bed.issues.length===0 && bed.wins.length===0 && (
-              <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:22, textAlign:'center' }}>
-                <div style={{ fontFamily:'Fraunces,serif', fontSize:36, color:T.green, marginBottom:6, fontStyle:'italic' }}>~</div>
-                <div style={{ fontSize:12, color:T.inkDim }}>Platziere Pflanzen, um Hinweise zu erhalten.</div>
-              </div>
-            )}
-            {bed.issues.map((iss,i) => {
-              const reason = companionReason(iss.a.id, iss.b.id);
-              return (
-                <div key={i} style={{ padding:14, marginBottom:10, borderRadius:14, background:'rgba(201,84,58,0.08)', border:`1px solid rgba(201,84,58,0.22)` }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                    <div style={{ width:8, height:8, borderRadius:4, background:T.bad }} />
-                    <div style={{ ...LABEL, color:T.bad }}>Konflikt</div>
-                  </div>
-                  <div style={{ fontFamily:'Fraunces,serif', fontSize:16, fontWeight:500 }}>{iss.a.de} <em style={{ color:T.bad }}>vs.</em> {iss.b.de}</div>
-                  {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:6, lineHeight:1.5 }}>{reason}</div>}
+        {activeTab==='issues' && (() => {
+          const rotation = getRotationAnalysis(bed.seasonCells);
+          return (
+            <div>
+              {bed.issues.length===0 && bed.wins.length===0 && rotation.warnings.length===0 && (
+                <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:22, textAlign:'center' }}>
+                  <div style={{ fontFamily:'Fraunces,serif', fontSize:36, color:T.green, marginBottom:6, fontStyle:'italic' }}>~</div>
+                  <div style={{ fontSize:12, color:T.inkDim }}>Platziere Pflanzen, um Hinweise zu erhalten.</div>
                 </div>
-              );
-            })}
-            {bed.wins.slice(0,6).map((w,i) => {
-              const reason = companionReason(w.a.id, w.b.id);
-              return (
-                <div key={`w${i}`} style={{ padding:14, marginBottom:10, borderRadius:14, background:'rgba(107,142,78,0.08)', border:`1px solid rgba(107,142,78,0.22)` }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                    <div style={{ width:8, height:8, borderRadius:4, background:T.good }} />
-                    <div style={{ ...LABEL, color:T.good }}>Gute Nachbarn</div>
+              )}
+              {bed.issues.map((iss,i) => {
+                const reason = companionReason(iss.a.id, iss.b.id);
+                return (
+                  <div key={i} style={{ padding:14, marginBottom:10, borderRadius:14, background:'rgba(201,84,58,0.08)', border:`1px solid rgba(201,84,58,0.22)` }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                      <div style={{ width:8, height:8, borderRadius:4, background:T.bad }} />
+                      <div style={{ ...LABEL, color:T.bad }}>Konflikt</div>
+                    </div>
+                    <div style={{ fontFamily:'Fraunces,serif', fontSize:16, fontWeight:500 }}>{iss.a.de} <em style={{ color:T.bad }}>vs.</em> {iss.b.de}</div>
+                    {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:6, lineHeight:1.5 }}>{reason}</div>}
                   </div>
-                  <div style={{ fontFamily:'Fraunces,serif', fontSize:16, fontWeight:500 }}>{w.a.de} <em style={{ color:T.good }}>+</em> {w.b.de}</div>
-                  {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:6, lineHeight:1.5 }}>{reason}</div>}
+                );
+              })}
+              {bed.wins.slice(0,6).map((w,i) => {
+                const reason = companionReason(w.a.id, w.b.id);
+                return (
+                  <div key={`w${i}`} style={{ padding:14, marginBottom:10, borderRadius:14, background:'rgba(107,142,78,0.08)', border:`1px solid rgba(107,142,78,0.22)` }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                      <div style={{ width:8, height:8, borderRadius:4, background:T.good }} />
+                      <div style={{ ...LABEL, color:T.good }}>Gute Nachbarn</div>
+                    </div>
+                    <div style={{ fontFamily:'Fraunces,serif', fontSize:16, fontWeight:500 }}>{w.a.de} <em style={{ color:T.good }}>+</em> {w.b.de}</div>
+                    {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:6, lineHeight:1.5 }}>{reason}</div>}
+                  </div>
+                );
+              })}
+              {rotation.warnings.length > 0 && (
+                <div style={{ marginTop: bed.issues.length || bed.wins.length ? 14 : 0 }}>
+                  <div style={{ ...LABEL, marginBottom:8 }}>Fruchtfolge · Rotation</div>
+                  {rotation.warnings.map((w,i) => (
+                    <div key={i} style={{ padding:14, marginBottom:10, borderRadius:14, background:'rgba(217,164,65,0.08)', border:`1px solid rgba(217,164,65,0.3)` }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                        <div style={{ width:8, height:8, borderRadius:4, background:T.ochre }} />
+                        <div style={{ ...LABEL, color:T.ochre }}>Fruchtfolge-Hinweis</div>
+                      </div>
+                      <div style={{ fontFamily:'Fraunces,serif', fontSize:15, fontWeight:500, marginBottom:4 }}>{w.familyDe}</div>
+                      <div style={{ fontSize:11, color:T.inkDim }}>In mehreren Saisons: {w.seasons.join(', ')}.</div>
+                      {w.tip && <div style={{ fontSize:11, color:T.inkDim, marginTop:5, lineHeight:1.5 }}>{w.tip}</div>}
+                    </div>
+                  ))}
+                  {rotation.score >= 75 && rotation.warnings.length === 0 && (
+                    <div style={{ padding:12, borderRadius:12, background:'rgba(107,142,78,0.08)', border:`1px solid rgba(107,142,78,0.22)`, fontSize:12, color:T.good }}>
+                      ✓ Gute Fruchtfolge — Pflanzenfamilien gut verteilt.
+                    </div>
+                  )}
                 </div>
-              );
-            })}
-          </div>
-        )}
+              )}
+            </div>
+          );
+        })()}
 
         {activeTab==='plants' && (
           <div>
@@ -498,7 +527,6 @@ export default function BedPlanner() {
                 {t.count && <Chip style={{ fontSize:10 }}>{t.count}×</Chip>}
               </div>
             ))}
-            {/* Per-plant care notes */}
             {Object.values(bed.cells).length > 0 && (
               <div style={{ marginTop:20 }}>
                 <div style={{ ...LABEL, marginBottom:12 }}>Pflegeanleitung</div>
@@ -519,6 +547,80 @@ export default function BedPlanner() {
             )}
           </div>
         )}
+
+        {activeTab==='harvest' && (() => {
+          const bedHarvests = entriesForBed(bedId);
+          const placedPlantIds = [...new Set(Object.values(bed.cells).map(v => typeof v === 'object' ? v.plantId : v).filter(Boolean))];
+          const totalLogged = bedHarvests.reduce((s, e) => s + e.amountKg, 0);
+          const planned = Object.values(bed.cells)
+            .filter(v => typeof v === 'object')
+            .reduce((s, { plantId, count = 1 }) => s + (plantById(plantId)?.yield || 0) * count, 0);
+          return (
+            <div>
+              <div style={LABEL}>Ernte erfassen</div>
+              <div style={{ padding:14, background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, marginBottom:16 }}>
+                <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+                  <select value={harvestPlant} onChange={e=>setHarvestPlant(e.target.value)}
+                    style={{ flex:1, padding:'8px 10px', borderRadius:10, border:`1px solid ${T.border}`, background:T.bg, color:T.ink, fontFamily:'inherit', fontSize:12 }}>
+                    <option value="">Pflanze wählen…</option>
+                    {placedPlantIds.map(pid => {
+                      const p = plantById(pid);
+                      return p ? <option key={pid} value={pid}>{p.de}</option> : null;
+                    })}
+                  </select>
+                </div>
+                <div style={{ display:'flex', gap:8 }}>
+                  <input type="number" min="0" step="0.1" placeholder="kg" value={harvestAmount} onChange={e=>setHarvestAmount(e.target.value)}
+                    style={{ flex:1, padding:'8px 10px', borderRadius:10, border:`1px solid ${T.border}`, background:T.bg, color:T.ink, fontFamily:'JetBrains Mono,monospace', fontSize:12 }} />
+                  <button
+                    disabled={!harvestPlant || !harvestAmount}
+                    onClick={() => {
+                      addHarvest({ bedId, plantId:harvestPlant, season:bed.season, amountKg:harvestAmount });
+                      setHarvestAmount('');
+                    }}
+                    style={{ padding:'8px 16px', borderRadius:10, background:harvestPlant&&harvestAmount?T.green:'rgba(31,42,27,0.12)', color:harvestPlant&&harvestAmount?'#fff':T.inkMute, border:'none', cursor:harvestPlant&&harvestAmount?'pointer':'default', fontWeight:600, fontSize:12, fontFamily:'inherit', transition:'all 0.15s' }}>
+                    Eintragen
+                  </button>
+                </div>
+              </div>
+
+              {(planned > 0 || totalLogged > 0) && (
+                <div style={{ display:'flex', gap:8, marginBottom:16 }}>
+                  <div style={{ flex:1, padding:12, background:T.panel, border:`1px solid ${T.border}`, borderRadius:12, textAlign:'center' }}>
+                    <div style={{ ...MONO, fontSize:9, color:T.inkMute, textTransform:'uppercase', letterSpacing:'0.08em' }}>Geplant</div>
+                    <div style={{ fontFamily:'Fraunces,serif', fontSize:20, fontWeight:500, color:T.inkDim, marginTop:2 }}>~{planned.toFixed(1)} kg</div>
+                  </div>
+                  <div style={{ flex:1, padding:12, background:T.panel, border:`1px solid ${T.border}`, borderRadius:12, textAlign:'center' }}>
+                    <div style={{ ...MONO, fontSize:9, color:T.inkMute, textTransform:'uppercase', letterSpacing:'0.08em' }}>Geerntet</div>
+                    <div style={{ fontFamily:'Fraunces,serif', fontSize:20, fontWeight:500, color:T.green, marginTop:2 }}>{totalLogged.toFixed(1)} kg</div>
+                  </div>
+                </div>
+              )}
+
+              {bedHarvests.length === 0 ? (
+                <div style={{ fontSize:12, color:T.inkMute, textAlign:'center', padding:'20px 0' }}>Noch keine Ernten eingetragen.</div>
+              ) : (
+                <div>
+                  <div style={LABEL}>Verlauf</div>
+                  {[...bedHarvests].reverse().map(e => {
+                    const p = plantById(e.plantId);
+                    return (
+                      <div key={e.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 0', borderBottom:`1px solid ${T.border}` }}>
+                        {p && <PlantTile plant={p} size={22} showLabel={false} draggable={false} />}
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:12, fontWeight:600 }}>{p?.de || e.plantId}</div>
+                          <div style={{ ...MONO, fontSize:10, color:T.inkMute }}>{e.date}</div>
+                        </div>
+                        <div style={{ ...MONO, fontSize:12, color:T.green, fontWeight:600 }}>{e.amountKg.toFixed(1)} kg</div>
+                        <button onClick={() => deleteHarvest(e.id)} style={{ background:'none', border:'none', color:T.inkMute, cursor:'pointer', fontSize:14, lineHeight:1, padding:'2px 4px' }}>×</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </aside>
     </div>
     {touchGhost && (() => {

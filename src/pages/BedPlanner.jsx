@@ -26,8 +26,21 @@ function saveBedLocally(bedId, data) {
   } catch {}
 }
 
-function GenerateModal({ goal, setGoal, picks, togglePick, plan, step, onGenerate, onApply, onBack, onClose, bedWidth, bedDepth, availablePlants }) {
+function GenerateModal({ goal, setGoal, picks, togglePick, plan, step, onGenerate, onApply, onBack, onClose, bedWidth, bedDepth, seasonPlants }) {
   const previewBed = plan ? { cells:plan.cells, plantStatus:{}, bedWidth, bedDepth } : null;
+  const seasonIds = new Set(seasonPlants.map(p => p.id));
+  const offSeasonPlants = PLANTS.filter(p => !seasonIds.has(p.id));
+
+  function PlantButton({ p, off }) {
+    const selected = picks.includes(p.id);
+    return (
+      <button key={p.id} onClick={()=>togglePick(p.id)} style={{ padding:7, borderRadius:10, background:selected?'#fff':off?'transparent':'rgba(31,42,27,0.03)', border:`1.5px solid ${selected?T.green:off?T.borderHi:T.border}`, cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:4, transition:'all 0.15s', fontFamily:'inherit', opacity:off&&!selected?0.55:1 }}>
+        <PlantTile plant={p} size={28} showLabel={false} draggable={false} />
+        <div style={{ fontSize:8, fontWeight:600, textAlign:'center', lineHeight:1.2, color:off&&!selected?T.inkMute:T.ink }}>{p.de}</div>
+      </button>
+    );
+  }
+
   return (
     <>
       <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(31,42,27,0.5)', zIndex:200 }} />
@@ -48,15 +61,24 @@ function GenerateModal({ goal, setGoal, picks, togglePick, plan, step, onGenerat
                 </button>
               ))}
             </div>
-            <div style={{ ...LABEL, marginBottom:10 }}>Pflanzen · {picks.length} ausgewählt</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:6, marginBottom:24 }}>
-              {availablePlants.map(p => (
-                <button key={p.id} onClick={()=>togglePick(p.id)} style={{ padding:7, borderRadius:10, background:picks.includes(p.id)?'#fff':'rgba(31,42,27,0.03)', border:`1.5px solid ${picks.includes(p.id)?T.green:T.border}`, cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:4, transition:'all 0.15s', fontFamily:'inherit' }}>
-                  <PlantTile plant={p} size={28} showLabel={false} draggable={false} />
-                  <div style={{ fontSize:8, fontWeight:600, textAlign:'center', lineHeight:1.2 }}>{p.de}</div>
-                </button>
-              ))}
+
+            <div style={{ ...LABEL, marginBottom:10 }}>Empfohlen für diese Saison · {picks.filter(id => seasonIds.has(id)).length} ausgewählt</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:6, marginBottom:16 }}>
+              {seasonPlants.map(p => <PlantButton key={p.id} p={p} off={false} />)}
             </div>
+
+            {offSeasonPlants.length > 0 && (
+              <>
+                <div style={{ display:'flex', alignItems:'center', gap:10, margin:'6px 0 10px' }}>
+                  <div style={{ ...LABEL, color:T.inkMute }}>Außerhalb der Saison · {picks.filter(id => !seasonIds.has(id)).length} ausgewählt</div>
+                  <div style={{ flex:1, height:1, background:T.border }} />
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:6, marginBottom:24 }}>
+                  {offSeasonPlants.map(p => <PlantButton key={p.id} p={p} off={true} />)}
+                </div>
+              </>
+            )}
+
             <button onClick={onGenerate} disabled={picks.length === 0} style={{ width:'100%', padding:'12px 20px', borderRadius:999, background:picks.length?T.green:'rgba(31,42,27,0.12)', color:picks.length?'#fff':T.inkMute, border:'none', cursor:picks.length?'pointer':'default', fontSize:14, fontWeight:600, fontFamily:'inherit', transition:'all 0.15s' }}>
               Plan generieren ✦
             </button>
@@ -396,7 +418,7 @@ export default function BedPlanner() {
           </div>
         );
       })()}
-      {showGenModal && <GenerateModal goal={genGoal} setGoal={setGenGoal} picks={genPicks} togglePick={toggleGenPick} plan={genPlan} step={genStep} onGenerate={runGenerate} onApply={applyGenPlan} onBack={()=>setGenStep(1)} onClose={closeGenModal} bedWidth={initialData?.width||bed.bedWidth||120} bedDepth={initialData?.depth||bed.bedDepth||80} availablePlants={seasonPlants} />}
+      {showGenModal && <GenerateModal goal={genGoal} setGoal={setGenGoal} picks={genPicks} togglePick={toggleGenPick} plan={genPlan} step={genStep} onGenerate={runGenerate} onApply={applyGenPlan} onBack={()=>setGenStep(1)} onClose={closeGenModal} bedWidth={initialData?.width||bed.bedWidth||120} bedDepth={initialData?.depth||bed.bedDepth||80} seasonPlants={seasonPlants} />}
       <TabBar active="beds" />
     </div>
   );

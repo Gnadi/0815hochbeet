@@ -26,7 +26,7 @@ function saveBedLocally(bedId, data) {
   } catch {}
 }
 
-function GenerateModal({ goal, setGoal, picks, togglePick, plan, step, onGenerate, onApply, onBack, onClose, bedWidth, bedDepth }) {
+function GenerateModal({ goal, setGoal, picks, togglePick, plan, step, onGenerate, onApply, onBack, onClose, bedWidth, bedDepth, availablePlants }) {
   const previewBed = plan ? { cells:plan.cells, plantStatus:{}, bedWidth, bedDepth } : null;
   return (
     <>
@@ -50,7 +50,7 @@ function GenerateModal({ goal, setGoal, picks, togglePick, plan, step, onGenerat
             </div>
             <div style={{ ...LABEL, marginBottom:10 }}>Pflanzen · {picks.length} ausgewählt</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:6, marginBottom:24 }}>
-              {PLANTS.map(p => (
+              {availablePlants.map(p => (
                 <button key={p.id} onClick={()=>togglePick(p.id)} style={{ padding:7, borderRadius:10, background:picks.includes(p.id)?'#fff':'rgba(31,42,27,0.03)', border:`1.5px solid ${picks.includes(p.id)?T.green:T.border}`, cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:4, transition:'all 0.15s', fontFamily:'inherit' }}>
                   <PlantTile plant={p} size={28} showLabel={false} draggable={false} />
                   <div style={{ fontSize:8, fontWeight:600, textAlign:'center', lineHeight:1.2 }}>{p.de}</div>
@@ -127,7 +127,7 @@ export default function BedPlanner() {
   const touchDragRef = useRef({ active:false, plantId:null });
   const [touchGhost, setTouchGhost] = useState(null);
 
-  function openGenModal() { setGenStep(1); setGenPlan(null); setShowGenModal(true); }
+  function openGenModal() { setGenStep(1); setGenPlan(null); setGenPicks(seasonPlants.map(p => p.id)); setShowGenModal(true); }
   function closeGenModal() { setShowGenModal(false); setGenPlan(null); setGenStep(1); }
   function toggleGenPick(id) { setGenPicks(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]); }
   function runGenerate() {
@@ -396,7 +396,7 @@ export default function BedPlanner() {
           </div>
         );
       })()}
-      {showGenModal && <GenerateModal goal={genGoal} setGoal={setGenGoal} picks={genPicks} togglePick={toggleGenPick} plan={genPlan} step={genStep} onGenerate={runGenerate} onApply={applyGenPlan} onBack={()=>setGenStep(1)} onClose={closeGenModal} bedWidth={initialData?.width||bed.bedWidth||120} bedDepth={initialData?.depth||bed.bedDepth||80} />}
+      {showGenModal && <GenerateModal goal={genGoal} setGoal={setGenGoal} picks={genPicks} togglePick={toggleGenPick} plan={genPlan} step={genStep} onGenerate={runGenerate} onApply={applyGenPlan} onBack={()=>setGenStep(1)} onClose={closeGenModal} bedWidth={initialData?.width||bed.bedWidth||120} bedDepth={initialData?.depth||bed.bedDepth||80} availablePlants={seasonPlants} />}
       <TabBar active="beds" />
     </div>
   );

@@ -263,13 +263,13 @@ export default function BedPlanner() {
           <div style={LABEL}>Beet 01</div>
           <h1 style={{ fontFamily:'Fraunces,serif', fontSize:24, margin:'2px 0 0', fontWeight:500 }}><em style={{ color:T.green, fontStyle:'italic' }}>{bedName}</em></h1>
         </div>
-        <div style={{ display:'flex', gap:6 }}>
-          <button onClick={bed.undo} disabled={!bed.canUndo} style={{ width:36, height:36, borderRadius:18, background:T.panel, border:`1px solid ${T.border}`, fontSize:14, cursor:'pointer', opacity:bed.canUndo?1:0.4 }}>↶</button>
-          <button onClick={openGenModal} style={{ width:36, height:36, borderRadius:18, background:T.green, border:'none', color:'#fff', fontSize:13, cursor:'pointer' }}>✦</button>
-          <button onClick={bed.fixBed} style={{ width:36, height:36, borderRadius:18, background:T.terra, border:'none', color:'#fff', fontSize:13, cursor:'pointer' }}>⚙</button>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap', justifyContent:'flex-end' }}>
+          <button onClick={bed.undo} disabled={!bed.canUndo} style={{ height:40, padding:'0 14px', borderRadius:999, background:T.panel, border:`1px solid ${T.border}`, fontSize:13, fontWeight:600, fontFamily:'inherit', cursor:'pointer', opacity:bed.canUndo?1:0.4, display:'flex', alignItems:'center', gap:5 }}>↶ <span>Undo</span></button>
+          <button onClick={openGenModal} style={{ height:40, padding:'0 14px', borderRadius:999, background:T.green, border:'none', color:'#fff', fontSize:13, fontWeight:600, fontFamily:'inherit', cursor:'pointer', display:'flex', alignItems:'center', gap:5 }}>✦ <span>Generieren</span></button>
+          <button onClick={bed.fixBed} style={{ height:40, padding:'0 14px', borderRadius:999, background:T.terra, border:'none', color:'#fff', fontSize:13, fontWeight:600, fontFamily:'inherit', cursor:'pointer', display:'flex', alignItems:'center', gap:5 }}>🪄 <span>Fix Beet</span></button>
           {confirmDelete
-            ? <button onClick={deleteBed} style={{ height:36, padding:'0 12px', borderRadius:18, background:'rgba(201,84,58,0.12)', border:`1px solid rgba(201,84,58,0.4)`, color:T.bad, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>Löschen?</button>
-            : <button onClick={()=>setConfirmDelete(true)} style={{ width:36, height:36, borderRadius:18, background:T.panel, border:`1px solid ${T.border}`, cursor:'pointer', color:T.inkMute, display:'flex', alignItems:'center', justifyContent:'center' }}><TrashIcon size={14} /></button>
+            ? <button onClick={deleteBed} style={{ height:40, padding:'0 14px', borderRadius:999, background:'rgba(201,84,58,0.12)', border:`1px solid rgba(201,84,58,0.4)`, color:T.bad, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>Löschen?</button>
+            : <button onClick={()=>setConfirmDelete(true)} style={{ width:40, height:40, borderRadius:999, background:T.panel, border:`1px solid ${T.border}`, cursor:'pointer', color:T.inkMute, display:'flex', alignItems:'center', justifyContent:'center' }}><TrashIcon size={14} /></button>
           }
         </div>
       </div>
@@ -481,7 +481,7 @@ export default function BedPlanner() {
             <Btn onClick={bed.redo} disabled={!bed.canRedo} title="Wiederholen">↷</Btn>
             <Btn onClick={()=>setShowSun(s=>!s)} style={{ background:showSun?T.ochre:T.panel, color:showSun?'#fff':T.ink, border:'none' }}>☀ Sonne</Btn>
             <Btn onClick={openGenModal} variant="primary">✦ Generieren</Btn>
-            <Btn onClick={bed.fixBed} variant="terra">⚙ Fix my bed</Btn>
+            <Btn onClick={bed.fixBed} variant="terra">🪄 Fix my bed</Btn>
             <Btn onClick={()=>navigate(`/bed/${bedId}/seasons`)}>🗓 Saison</Btn>
             {confirmDelete
               ? <><Btn onClick={deleteBed} style={{ background:'rgba(201,84,58,0.12)', color:T.bad, borderColor:'rgba(201,84,58,0.4)' }}>Ja, löschen</Btn><Btn onClick={()=>setConfirmDelete(false)}>Abbrechen</Btn></>

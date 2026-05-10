@@ -14,7 +14,7 @@ import './index.css';
 
 function Guard({ children }) {
   const hasBeds = JSON.parse(localStorage.getItem('hb_beds') || '[]').length > 0;
-  return hasBeds ? children : <Navigate to="/dashboard" replace />;
+  return hasBeds ? children : <Navigate to="/onboarding" replace />;
 }
 
 function AppRoutes() {
@@ -25,11 +25,13 @@ function AppRoutes() {
     if (user) seedPlantsToFirestore();
   }, [user]);
 
+  const hasBeds = JSON.parse(localStorage.getItem('hb_beds') || '[]').length > 0;
+
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={hasBeds ? <Navigate to="/dashboard" replace /> : <Navigate to="/onboarding" replace />} />
       <Route path="/onboarding" element={<Onboarding />} />
-      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/dashboard" element={<Guard><Dashboard /></Guard>} />
       <Route path="/bed/:bedId" element={<Guard><BedPlanner /></Guard>} />
       <Route path="/bed/:bedId/seasons" element={<Guard><SeasonSwitcher /></Guard>} />
       <Route path="/autoplan" element={<Guard><AutoPlan /></Guard>} />

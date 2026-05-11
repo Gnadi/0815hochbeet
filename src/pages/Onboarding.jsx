@@ -156,7 +156,7 @@ export default function Onboarding() {
 
   return (
     <>
-      <div style={{ height:'100vh', display:'flex', flexDirection:mobile?'column':'row', background:T.bg }}>
+      <div style={{ height:'100dvh', display:'flex', flexDirection:mobile?'column':'row', background:T.bg }}>
         {hero}
         {form}
       </div>

@@ -115,7 +115,7 @@ export default function Onboarding() {
   };
 
   const hero = (
-    <div style={{ flex:1, background:`linear-gradient(170deg,${T.green} 0%,#1F2A1B 100%)`, display:'flex', flexDirection:'column', justifyContent:'space-between', padding:mobile?'24px 24px 20px':36, color:'#fff', position:'relative', overflow:'hidden', minHeight:mobile?180:undefined }}>
+    <div style={{ flex:mobile?'0 0 160px':1, background:`linear-gradient(170deg,${T.green} 0%,#1F2A1B 100%)`, display:'flex', flexDirection:'column', justifyContent:'space-between', padding:mobile?'24px 24px 20px':36, color:'#fff', position:'relative', overflow:'hidden' }}>
       <div style={{ position:'absolute', inset:0, opacity:0.06, background:'radial-gradient(circle at 30% 20%,#fff 1px,transparent 2px),radial-gradient(circle at 70% 80%,#fff 1px,transparent 2px)', backgroundSize:'20px 20px,30px 30px' }} />
       <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, opacity:0.7, position:'relative' }}>HOCHBEETPLANER · 2026</div>
       <div style={{ position:'relative' }}>
@@ -129,31 +129,34 @@ export default function Onboarding() {
   );
 
   const form = (
-    <div style={{ width:mobile?undefined:440, padding:mobile?'24px 20px':44, display:'flex', flexDirection:'column', background:T.paper, borderLeft:mobile?'none':`1px solid ${T.border}`, flex:mobile?1:undefined, overflowY:'auto' }}>
-      <div style={{ display:'flex', gap:6, marginBottom:32 }}>
-        {[1,2,3].map(n => <div key={n} style={{ flex:1, height:4, borderRadius:2, background:n<=step?T.green:'rgba(31,42,27,0.1)', transition:'background 0.3s' }} />)}
+    <div style={{ width:mobile?undefined:440, padding:mobile?0:44, display:'flex', flexDirection:'column', background:T.paper, borderLeft:mobile?'none':`1px solid ${T.border}`, flex:mobile?1:undefined, overflowY:mobile?'hidden':'auto' }}>
+      <div style={{ flex:1, overflowY:mobile?'auto':'visible', padding:mobile?'24px 20px 12px':0 }}>
+        <div style={{ display:'flex', gap:6, marginBottom:32 }}>
+          {[1,2,3].map(n => <div key={n} style={{ flex:1, height:4, borderRadius:2, background:n<=step?T.green:'rgba(31,42,27,0.1)', transition:'background 0.3s' }} />)}
+        </div>
+        {stepContent()}
       </div>
-      {stepContent()}
-      <div style={{ flex:1, minHeight:24 }} />
-      <div style={{ display:'flex', gap:8, marginTop:24 }}>
-        <button onClick={() => setStep(s=>s-1)} disabled={step===1} style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'9px 16px', borderRadius:999, background:T.panel, color:T.ink, border:`1px solid ${T.border}`, cursor:step===1?'default':'pointer', fontSize:13, fontWeight:500, opacity:step===1?0.4:1, fontFamily:'inherit' }}>← Zurück</button>
-        <button onClick={step===3?finish:()=>setStep(s=>s+1)} disabled={saving} style={{ flex:1, display:'inline-flex', alignItems:'center', justifyContent:'center', gap:8, padding:'9px 16px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:13, fontWeight:500, fontFamily:'inherit', opacity:saving?0.6:1 }}>
-          {saving?'Speichern…':step===3?'Beet erstellen ✦':'Weiter →'}
-        </button>
-      </div>
-      {!user && step===3 && (
-        <div style={{ marginTop:16, textAlign:'center' }}>
-          <button onClick={() => setShowAuth(true)} style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontSize:12, fontFamily:'inherit', textDecoration:'underline' }}>
-            Anmelden um zu speichern
+      <div style={{ padding:mobile?'12px 20px 24px':undefined, borderTop:mobile?`1px solid ${T.border}`:undefined, marginTop:mobile?0:24 }}>
+        <div style={{ display:'flex', gap:8 }}>
+          <button onClick={() => setStep(s=>s-1)} disabled={step===1} style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'9px 16px', borderRadius:999, background:T.panel, color:T.ink, border:`1px solid ${T.border}`, cursor:step===1?'default':'pointer', fontSize:13, fontWeight:500, opacity:step===1?0.4:1, fontFamily:'inherit' }}>← Zurück</button>
+          <button onClick={step===3?finish:()=>setStep(s=>s+1)} disabled={saving} style={{ flex:1, display:'inline-flex', alignItems:'center', justifyContent:'center', gap:8, padding:'9px 16px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:13, fontWeight:500, fontFamily:'inherit', opacity:saving?0.6:1 }}>
+            {saving?'Speichern…':step===3?'Beet erstellen ✦':'Weiter →'}
           </button>
         </div>
-      )}
+        {!user && step===3 && (
+          <div style={{ marginTop:16, textAlign:'center' }}>
+            <button onClick={() => setShowAuth(true)} style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontSize:12, fontFamily:'inherit', textDecoration:'underline' }}>
+              Anmelden um zu speichern
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 
   return (
     <>
-      <div style={{ height:'100vh', display:'flex', flexDirection:mobile?'column':'row', background:T.bg }}>
+      <div style={{ height:'100dvh', display:'flex', flexDirection:mobile?'column':'row', background:T.bg }}>
         {hero}
         {form}
       </div>

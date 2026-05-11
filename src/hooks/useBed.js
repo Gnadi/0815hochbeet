@@ -178,6 +178,12 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     setHistory([]); setFuture([]);
   }
 
+  // Replace the current season's cells with a generated plan, preserving undo history
+  function applySeasonCells(newCells) {
+    snapshot();
+    setSeasonCells(sc => ({ ...sc, [season]: newCells }));
+  }
+
   // Distance-based companion status: neighbor = within 1.5× touching distance in cm
   const plantStatus = useMemo(() => {
     const out = {};
@@ -275,7 +281,7 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
 
   return {
     shape, shapeId, setShape:setShapeId,
-    cells, seasonCells, loadSeasonCells,
+    cells, seasonCells, loadSeasonCells, applySeasonCells,
     place, remove, move, clear, canPlace,
     plantStatus,
     issues, wins,

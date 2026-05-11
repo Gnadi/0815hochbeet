@@ -57,9 +57,9 @@ export default function Onboarding() {
     if (step === 1) return (
       <div>
         {label('Schritt 1/3')}
-        <h2 style={{ fontFamily:'Fraunces,serif', fontSize:mobile?22:30, margin:'0 0 6px', fontWeight:500 }}>Wie heißt dein Beet?</h2>
-        <p style={{ fontSize:13, color:T.inkDim, marginBottom:mobile?14:24 }}>Du kannst das später jederzeit ändern.</p>
-        {input({ value:name, onChange:e=>setName(e.target.value), placeholder:'Mein Hochbeet', style:{marginBottom:12} })}
+        <h2 style={{ fontFamily:'Fraunces,serif', fontSize:30, margin:'0 0 8px', fontWeight:500 }}>Wie heißt dein Beet?</h2>
+        <p style={{ fontSize:13, color:T.inkDim, marginBottom:24 }}>Du kannst das später jederzeit ändern.</p>
+        {input({ value:name, onChange:e=>setName(e.target.value), placeholder:'Mein Hochbeet', style:{marginBottom:16} })}
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
           <div>
             {label('Breite (cm)')}
@@ -75,12 +75,12 @@ export default function Onboarding() {
     if (step === 2) return (
       <div>
         {label('Schritt 2/3')}
-        <h2 style={{ fontFamily:'Fraunces,serif', fontSize:mobile?22:30, margin:'0 0 6px', fontWeight:500 }}>Welche <em style={{ color:T.green }}>Form</em>?</h2>
-        <p style={{ fontSize:13, color:T.inkDim, marginBottom:mobile?14:24 }}>Du kannst auch frei zeichnen.</p>
+        <h2 style={{ fontFamily:'Fraunces,serif', fontSize:30, margin:'0 0 8px', fontWeight:500 }}>Welche <em style={{ color:T.green }}>Form</em>?</h2>
+        <p style={{ fontSize:13, color:T.inkDim, marginBottom:24 }}>Du kannst auch frei zeichnen.</p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
           {Object.values(SHAPES).map(s => (
-            <button key={s.id} onClick={() => setShapeId(s.id)} style={{ padding:mobile?'14px 10px':'22px 12px', flexDirection:'column', display:'flex', gap:mobile?8:14, cursor:'pointer', alignItems:'center', background:shapeId===s.id?'rgba(107,142,78,0.08)':T.panel, border:`${shapeId===s.id?2:1}px solid ${shapeId===s.id?T.green:T.border}`, borderRadius:18, transition:'all 0.15s' }}>
-              <div style={{ width:mobile?36:52, height:mobile?24:36, background:T.green, borderRadius:s.id==='freeform'?'40% 60% 50% 50%':6, opacity:shapeId===s.id?1:0.6, transition:'opacity 0.15s' }} />
+            <button key={s.id} onClick={() => setShapeId(s.id)} style={{ padding:'22px 12px', flexDirection:'column', display:'flex', gap:14, cursor:'pointer', alignItems:'center', background:shapeId===s.id?'rgba(107,142,78,0.08)':T.panel, border:`${shapeId===s.id?2:1}px solid ${shapeId===s.id?T.green:T.border}`, borderRadius:18, transition:'all 0.15s' }}>
+              <div style={{ width:52, height:36, background:T.green, borderRadius:s.id==='freeform'?'40% 60% 50% 50%':6, opacity:shapeId===s.id?1:0.6, transition:'opacity 0.15s' }} />
               <div style={{ fontSize:13, fontWeight:600, color:shapeId===s.id?T.green:T.ink }}>{s.de}</div>
             </button>
           ))}
@@ -90,9 +90,9 @@ export default function Onboarding() {
     return (
       <div>
         {label('Schritt 3/3')}
-        <h2 style={{ fontFamily:'Fraunces,serif', fontSize:mobile?22:30, margin:'0 0 6px', fontWeight:500 }}>Standort &amp; <em style={{ color:T.green }}>Sonne</em>.</h2>
-        <p style={{ fontSize:13, color:T.inkDim, marginBottom:mobile?14:24 }}>Wir nutzen das für bessere Vorschläge.</p>
-        <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:mobile?14:18, marginBottom:10 }}>
+        <h2 style={{ fontFamily:'Fraunces,serif', fontSize:30, margin:'0 0 8px', fontWeight:500 }}>Standort &amp; <em style={{ color:T.green }}>Sonne</em>.</h2>
+        <p style={{ fontSize:13, color:T.inkDim, marginBottom:24 }}>Wir nutzen das für bessere Vorschläge.</p>
+        <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:18, marginBottom:12 }}>
           {label('Sonnenstunden / Tag')}
           <div style={{ display:'flex', gap:6 }}>
             {['<3','3-5','5-7','7+'].map(s => (
@@ -100,7 +100,7 @@ export default function Onboarding() {
             ))}
           </div>
         </div>
-        <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:mobile?14:18 }}>
+        <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:18 }}>
           {label('Klimazone')}
           <select value={zone} onChange={e=>setZone(e.target.value)} style={{ width:'100%', padding:12, background:'#fff', border:`1px solid ${T.border}`, color:T.ink, borderRadius:10, fontSize:13, fontFamily:'inherit' }}>
             <option value="zone7">Mitteleuropa · Zone 7</option>
@@ -115,29 +115,34 @@ export default function Onboarding() {
   };
 
   const hero = (
-    <div style={{ flex:1, background:`linear-gradient(170deg,${T.green} 0%,#1F2A1B 100%)`, display:'flex', flexDirection:'column', justifyContent:'space-between', padding:36, color:'#fff', position:'relative', overflow:'hidden' }}>
+    <div style={{ flex:1, background:`linear-gradient(170deg,${T.green} 0%,#1F2A1B 100%)`, display:'flex', flexDirection:'column', justifyContent:'space-between', padding:mobile?'24px 24px 20px':36, color:'#fff', position:'relative', overflow:'hidden', minHeight:mobile?180:undefined }}>
       <div style={{ position:'absolute', inset:0, opacity:0.06, background:'radial-gradient(circle at 30% 20%,#fff 1px,transparent 2px),radial-gradient(circle at 70% 80%,#fff 1px,transparent 2px)', backgroundSize:'20px 20px,30px 30px' }} />
       <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, opacity:0.7, position:'relative' }}>HOCHBEETPLANER · 2026</div>
       <div style={{ position:'relative' }}>
-        <div style={{ fontFamily:'Fraunces,serif', fontSize:88, lineHeight:0.95, marginBottom:18, fontWeight:500 }}>
+        <div style={{ fontFamily:'Fraunces,serif', fontSize:mobile?48:88, lineHeight:0.95, marginBottom:mobile?10:18, fontWeight:500 }}>
           Plane<br/>dein <em style={{ color:T.ochre, fontStyle:'italic' }}>Hochbeet</em>.
         </div>
-        <div style={{ fontSize:15, opacity:0.8, maxWidth:420, lineHeight:1.6 }}>Visuell. Saisonal. Mit smarten Vorschlägen für gute Nachbarn — und Warnungen vor schlechten.</div>
+        {!mobile && <div style={{ fontSize:15, opacity:0.8, maxWidth:420, lineHeight:1.6 }}>Visuell. Saisonal. Mit smarten Vorschlägen für gute Nachbarn — und Warnungen vor schlechten.</div>}
       </div>
-      <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, opacity:0.5 }}>Cultivated with care</div>
+      {!mobile && <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, opacity:0.5 }}>Cultivated with care</div>}
     </div>
   );
 
-  const navButtons = (
-    <div style={{ padding:mobile?'12px 20px 20px':undefined, borderTop:mobile?`1px solid ${T.border}`:undefined }}>
-      <div style={{ display:'flex', gap:8 }}>
-        <button onClick={() => setStep(s=>s-1)} disabled={step===1} style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'11px 18px', borderRadius:999, background:T.panel, color:T.ink, border:`1px solid ${T.border}`, cursor:step===1?'default':'pointer', fontSize:13, fontWeight:500, opacity:step===1?0.4:1, fontFamily:'inherit' }}>← Zurück</button>
-        <button onClick={step===3?finish:()=>setStep(s=>s+1)} disabled={saving} style={{ flex:1, display:'inline-flex', alignItems:'center', justifyContent:'center', gap:8, padding:'11px 18px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:13, fontWeight:500, fontFamily:'inherit', opacity:saving?0.6:1 }}>
+  const form = (
+    <div style={{ width:mobile?undefined:440, padding:mobile?'24px 20px':44, display:'flex', flexDirection:'column', background:T.paper, borderLeft:mobile?'none':`1px solid ${T.border}`, flex:mobile?1:undefined, overflowY:'auto' }}>
+      <div style={{ display:'flex', gap:6, marginBottom:32 }}>
+        {[1,2,3].map(n => <div key={n} style={{ flex:1, height:4, borderRadius:2, background:n<=step?T.green:'rgba(31,42,27,0.1)', transition:'background 0.3s' }} />)}
+      </div>
+      {stepContent()}
+      <div style={{ flex:1, minHeight:24 }} />
+      <div style={{ display:'flex', gap:8, marginTop:24 }}>
+        <button onClick={() => setStep(s=>s-1)} disabled={step===1} style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'9px 16px', borderRadius:999, background:T.panel, color:T.ink, border:`1px solid ${T.border}`, cursor:step===1?'default':'pointer', fontSize:13, fontWeight:500, opacity:step===1?0.4:1, fontFamily:'inherit' }}>← Zurück</button>
+        <button onClick={step===3?finish:()=>setStep(s=>s+1)} disabled={saving} style={{ flex:1, display:'inline-flex', alignItems:'center', justifyContent:'center', gap:8, padding:'9px 16px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:13, fontWeight:500, fontFamily:'inherit', opacity:saving?0.6:1 }}>
           {saving?'Speichern…':step===3?'Beet erstellen ✦':'Weiter →'}
         </button>
       </div>
       {!user && step===3 && (
-        <div style={{ marginTop:12, textAlign:'center' }}>
+        <div style={{ marginTop:16, textAlign:'center' }}>
           <button onClick={() => setShowAuth(true)} style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontSize:12, fontFamily:'inherit', textDecoration:'underline' }}>
             Anmelden um zu speichern
           </button>
@@ -146,41 +151,11 @@ export default function Onboarding() {
     </div>
   );
 
-  if (mobile) return (
-    <>
-      <div style={{ height:'100vh', display:'flex', flexDirection:'column', background:T.paper }}>
-        {/* Compact mobile header */}
-        <div style={{ background:`linear-gradient(135deg,${T.green} 0%,#1F2A1B 100%)`, padding:'14px 20px', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
-          <div style={{ fontFamily:'Fraunces,serif', fontSize:22, color:'#fff', fontWeight:500, lineHeight:1 }}>
-            Plane dein <em style={{ color:T.ochre, fontStyle:'italic' }}>Hochbeet</em>.
-          </div>
-          <div style={{ display:'flex', gap:4 }}>
-            {[1,2,3].map(n => <div key={n} style={{ width:24, height:4, borderRadius:2, background:n<=step?T.ochre:'rgba(255,255,255,0.25)', transition:'background 0.3s' }} />)}
-          </div>
-        </div>
-        {/* Scrollable content */}
-        <div style={{ flex:1, overflowY:'auto', padding:'20px 20px 8px' }}>
-          {stepContent()}
-        </div>
-        {/* Always-visible nav */}
-        {navButtons}
-      </div>
-      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
-    </>
-  );
-
   return (
     <>
-      <div style={{ height:'100vh', display:'flex', flexDirection:'row', background:T.bg }}>
+      <div style={{ height:'100vh', display:'flex', flexDirection:mobile?'column':'row', background:T.bg }}>
         {hero}
-        <div style={{ width:440, padding:44, display:'flex', flexDirection:'column', background:T.paper, borderLeft:`1px solid ${T.border}`, overflowY:'auto' }}>
-          <div style={{ display:'flex', gap:6, marginBottom:32 }}>
-            {[1,2,3].map(n => <div key={n} style={{ flex:1, height:4, borderRadius:2, background:n<=step?T.green:'rgba(31,42,27,0.1)', transition:'background 0.3s' }} />)}
-          </div>
-          {stepContent()}
-          <div style={{ flex:1, minHeight:24 }} />
-          {navButtons}
-        </div>
+        {form}
       </div>
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
     </>

@@ -115,7 +115,7 @@ export default function Onboarding() {
   };
 
   const hero = (
-    <div style={{ flex:1, background:`linear-gradient(170deg,${T.green} 0%,#1F2A1B 100%)`, display:'flex', flexDirection:'column', justifyContent:'space-between', padding:mobile?'24px 24px 20px':36, color:'#fff', position:'relative', overflow:'hidden', minHeight:mobile?180:undefined }}>
+    <div style={{ flex:mobile?'0 0 160px':1, background:`linear-gradient(170deg,${T.green} 0%,#1F2A1B 100%)`, display:'flex', flexDirection:'column', justifyContent:'space-between', padding:mobile?'24px 24px 20px':36, color:'#fff', position:'relative', overflow:'hidden' }}>
       <div style={{ position:'absolute', inset:0, opacity:0.06, background:'radial-gradient(circle at 30% 20%,#fff 1px,transparent 2px),radial-gradient(circle at 70% 80%,#fff 1px,transparent 2px)', backgroundSize:'20px 20px,30px 30px' }} />
       <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, opacity:0.7, position:'relative' }}>HOCHBEETPLANER · 2026</div>
       <div style={{ position:'relative' }}>

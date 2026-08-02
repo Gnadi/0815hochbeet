@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { PLANTS, SHAPES, SNAP_CM, pairScore, plantById, defaultFreeformMask } from '../data/plants';
 
 const EMPTY_SC = { spring:{}, summer:{}, autumn:{}, winter:{} };
@@ -31,10 +31,17 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     return { ...baseShape, mask: (x,y) => !!customMask[`${x},${y}`] };
   }, [baseShape, customMask]);
 
+  // Identifies the shape the effect below last ran for. `baseShape` is a fresh
+  // object on every remount, so compare its meaningful parts instead.
+  const shapeKeyRef = useRef(null);
+
   // Shape change resets ALL seasons
   useEffect(() => {
-    setSeasonCells(EMPTY_SC);
-    setHistory([]); setFuture([]);
+    const shapeKey = `${shapeId}:${baseShape.w}x${baseShape.h}`;
+    const isFirstRun = shapeKeyRef.current === null;
+    const shapeChanged = shapeKeyRef.current !== shapeKey;
+    shapeKeyRef.current = shapeKey;
+
     const sun = {};
     const s = baseShape;
     const maskFn = s.preset ? s.mask : (x,y) => !!customMask[`${x},${y}`];
@@ -45,6 +52,16 @@ export function useBed(initialShapeId = 'rect', bedWidth = null, bedDepth = null
     }
     setSunMap(sun);
     if (shapeId !== 'freeform') setShapeEditing(false);
+
+    // Only wipe the plantings when the shape actually changed. On the first run
+    // there is nothing to wipe, and clearing regardless would discard a bed that
+    // BedPlanner has already hydrated from storage — which is exactly what
+    // happens in development, where StrictMode runs this effect a second time
+    // after the load.
+    if (!isFirstRun && shapeChanged) {
+      setSeasonCells(EMPTY_SC);
+      setHistory([]); setFuture([]);
+    }
   // eslint-disable-next-line
   }, [shapeId, baseShape]);
 

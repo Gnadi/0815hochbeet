@@ -1,638 +1,918 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { doc, onSnapshot, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../firebase';
-import { useAuth } from '../context/AuthContext';
-import { useBreakpoint } from '../hooks/useBreakpoint';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { LABEL, MONO, T } from '../theme';
+import { DIFFICULTY_DE, SEASONS, SUN_DE, WATER_DE, companionReason, plantById } from '../data/plants';
+import { FEEDERS, monthRangeLabel } from '../data/plantDetails';
+import { deleteBed as removeBed, duplicateBed, saveBed } from '../lib/beds';
+import { useBedRecord } from '../hooks/useBeds';
 import { useBed } from '../hooks/useBed';
+import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useHarvestLog } from '../hooks/useHarvestLog';
-import { T } from '../theme';
-import { PLANTS, SEASONS, SHAPES, plantById, companionReason } from '../data/plants';
+import { useTodos } from '../hooks/useTodos';
 import { getRotationAnalysis } from '../utils/rotationAdvice';
-import { PlantTile } from '../components/PlantTile';
+import { TASK_KINDS } from '../utils/taskEngine';
 import { BedCanvas } from '../components/BedCanvas';
+import { PlantPicker } from '../components/PlantPicker';
+import { Sheet } from '../components/Sheet';
 import { TabBar } from '../components/TabBar';
-import { Btn, TrashIcon } from '../components/Btn';
-import { Chip } from '../components/Chip';
+import { Btn, IconBtn, TrashIcon } from '../components/Btn';
+import { LogoLockup } from '../components/Logo';
+import { haptic, useToast } from '../components/Toast';
 
-const MONO = { fontFamily:'JetBrains Mono,monospace' };
-const LABEL = { ...MONO, fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute };
+const card = { background:T.panel, border:`1px solid ${T.border}`, borderRadius:16, padding:14 };
 
-function saveBedLocally(bedId, data) {
-  try {
-    const existing = JSON.parse(localStorage.getItem(`hb_bed_${bedId}`) || '{}');
-    localStorage.setItem(`hb_bed_${bedId}`, JSON.stringify({ ...existing, ...data, updatedAt:new Date().toISOString() }));
-  } catch {}
+const SEASON_ORDER = ['spring', 'summer', 'autumn', 'winter'];
+
+/** Order-independent fingerprint of a whole year's plantings. */
+function seasonCellsSig(seasonCells = {}) {
+  return SEASON_ORDER.map(season => {
+    const cells = seasonCells[season] || {};
+    return Object.keys(cells).sort()
+      .map(k => `${k}:${cells[k]?.plantId}:${cells[k]?.count || 1}`)
+      .join(',');
+  }).join('|');
+}
+const field = {
+  width:'100%', padding:'12px 14px', borderRadius:12,
+  border:`1px solid ${T.border}`, background:T.panel, color:T.ink,
+  outline:'none', minHeight:48,
+};
+
+function Stat({ label, value, tone }) {
+  return (
+    <div style={{ ...card, padding:'9px 10px', minWidth:0 }}>
+      <div style={{ ...LABEL, fontSize:8.5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{label}</div>
+      <div style={{ fontFamily:"'Fraunces',serif", fontSize:17, fontWeight:500, marginTop:2, color:tone || T.ink, whiteSpace:'nowrap' }}>{value}</div>
+    </div>
+  );
+}
+
+function PairCard({ a, b, tone, count = 1 }) {
+  const reason = companionReason(a.id, b.id);
+  const bad = tone === 'bad';
+  return (
+    <div style={{ padding:14, borderRadius:14, background:bad ? T.badBg : T.goodBg, border:`1px solid ${bad ? T.badBorder : T.goodBorder}` }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:6 }}>
+        <div style={{ ...LABEL, color:bad ? T.bad : T.good }}>{bad ? '✗ Konflikt' : '✓ Gute Nachbarn'}</div>
+        {count > 1 && <div style={{ ...MONO, fontSize:10, color:bad ? T.bad : T.good, fontWeight:700 }}>{count}×</div>}
+      </div>
+      <div style={{ fontFamily:"'Fraunces',serif", fontSize:15.5, fontWeight:500 }}>
+        {a.de} <em style={{ color:bad ? T.bad : T.good }}>{bad ? 'vs.' : '+'}</em> {b.de}
+      </div>
+      {reason && <div style={{ fontSize:11.5, color:T.inkDim, marginTop:6, lineHeight:1.55 }}>{reason}</div>}
+    </div>
+  );
+}
+
+/**
+ * Collapses the raw neighbour pairs into one card per species combination.
+ * A 47-plant bed produced dozens of identical "Erbse + Kohlrabi" rows, which
+ * buried the one pairing that actually needed attention.
+ */
+function groupPairs(list) {
+  const map = new Map();
+  for (const item of list) {
+    if (!item.a || !item.b) continue;
+    const key = [item.a.id, item.b.id].sort().join('|');
+    const hit = map.get(key);
+    if (hit) hit.count++;
+    else map.set(key, { a:item.a, b:item.b, count:1 });
+  }
+  return [...map.values()].sort((x, y) => y.count - x.count);
 }
 
 export default function BedPlanner() {
   const { bedId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
   const mobile = useBreakpoint();
-  const [initialData, setInitialData] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(`hb_bed_${bedId}`) || 'null'); } catch { return null; }
+  const toast = useToast();
+  const record = useBedRecord(bedId);
+  const [missing, setMissing] = useState(false);
+
+  // A bed that is not in the store yet may still be syncing down from
+  // Firestore — only give up after a beat.
+  useEffect(() => {
+    if (record) { setMissing(false); return; }
+    const t = setTimeout(() => setMissing(true), 1500);
+    return () => clearTimeout(t);
+  }, [record]);
+
+  if (!record) {
+    return (
+      <div style={{ minHeight:'100vh', background:T.bg, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, padding:24, textAlign:'center' }}>
+        <div style={{ ...MONO, fontSize:12, color:T.inkMute }}>{missing ? 'Beet nicht gefunden.' : 'Beet wird geladen…'}</div>
+        {missing && <Btn variant="primary" onClick={() => navigate('/beds')}>Zu meinen Beeten</Btn>}
+      </div>
+    );
+  }
+  return <Planner key={record.id} record={record} mobile={mobile} navigate={navigate} toast={toast} />;
+}
+
+function Planner({ record, mobile, navigate, toast }) {
+  const bedId = record.id;
+  const bed = useBed({
+    bedId,
+    width: record.width,
+    depth: record.depth,
+    initialSeason: record.season,
+    initialSeasonCells: record.seasonCells,
   });
-  const [loaded, setLoaded] = useState(() => {
-    try { return !!localStorage.getItem(`hb_bed_${bedId}`); } catch { return false; }
-  });
-  const bed = useBed(initialData?.shapeId || 'rect', initialData?.width, initialData?.depth);
-  const { entries: harvestEntries, addEntry: addHarvest, deleteEntry: deleteHarvest, entriesForBed } = useHarvestLog();
-  const [draggingPlant, setDraggingPlant] = useState(null);
+
+  const { addEntry: addHarvest, deleteEntry: deleteHarvest, entriesForBed } = useHarvestLog();
+  const { todos, toggleTodo } = useTodos();
+
+  const [armedPlant, setArmedPlant] = useState(null);
+  const [sheet, setSheet] = useState(null);          // picker | analysis | care | harvest | notes | settings | plant
+  const [inspect, setInspect] = useState(null);      // plantId shown in the detail sheet
   const [showSun, setShowSun] = useState(false);
-  const [activeTab, setActiveTab] = useState('plants');
-  const [notes, setNotes] = useState('');
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [selectedPlant, setSelectedPlant] = useState(null);
+  const [notes, setNotes] = useState(record.notes);
+  const [draft, setDraft] = useState(null);          // settings form draft
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [harvestPlant, setHarvestPlant] = useState('');
   const [harvestAmount, setHarvestAmount] = useState('');
+
+  // ── Persistence ──────────────────────────────────────────────────────────
+  //
+  // `syncedSig` is the plan both sides last agreed on. Comparing against it
+  // tells a local edit (write it out) apart from a change that arrived from
+  // elsewhere — the generator's undo, another tab, a Firestore pull — which
+  // has to be adopted instead. Without this the canvas kept showing a plan the
+  // store had already thrown away.
+  const syncedSig = useRef(null);
+
+  useEffect(() => {
+    const sig = seasonCellsSig(bed.seasonCells);
+    if (syncedSig.current === null) { syncedSig.current = sig; return; }  // hydrate render
+    if (sig === syncedSig.current) {
+      saveBed(bedId, { season: bed.season });
+      return;
+    }
+    syncedSig.current = sig;
+    saveBed(bedId, { seasonCells: bed.seasonCells, season: bed.season });
+  }, [bed.seasonCells, bed.season, bedId]);
+
+  useEffect(() => {
+    const sig = seasonCellsSig(record.seasonCells);
+    if (syncedSig.current === null || sig === syncedSig.current) return;
+    syncedSig.current = sig;
+    bed.loadSeasonCells(record.seasonCells);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [record.seasonCells]);
+
   const notesTimer = useRef(null);
-  const saveTimer = useRef(null);
-  const [bedName, setBedName] = useState('Mein Hochbeet');
-  const touchDragRef = useRef({ active:false, plantId:null });
-  const [touchGhost, setTouchGhost] = useState(null);
-
-  function startTouchDrag(plantId, e) {
-    e.preventDefault();
-    touchDragRef.current = { active:true, plantId };
-    setDraggingPlant(plantId);
-    const touch = e.touches[0];
-    setTouchGhost({ plantId, x:touch.clientX, y:touch.clientY });
-  }
-
-  useEffect(() => {
-    function onTouchMove(e) {
-      if (!touchDragRef.current.active) return;
-      e.preventDefault();
-      const touch = e.touches[0];
-      setTouchGhost({ plantId:touchDragRef.current.plantId, x:touch.clientX, y:touch.clientY });
-    }
-    function onTouchEnd(e) {
-      if (!touchDragRef.current.active) return;
-      const touch = e.changedTouches[0];
-      const canvas = document.getElementById('bed-canvas');
-      if (canvas) {
-        const rect = canvas.getBoundingClientRect();
-        if (touch.clientX >= rect.left && touch.clientX <= rect.right &&
-            touch.clientY >= rect.top  && touch.clientY <= rect.bottom) {
-          const bw = bed.bedWidth || 120;
-          const bh = bed.bedDepth || 80;
-          const scale = rect.width / bw;
-          const xCm = Math.round(((touch.clientX - rect.left) / scale) / 5) * 5;
-          const yCm = Math.round(((touch.clientY - rect.top)  / scale) / 5) * 5;
-          bed.place(xCm, yCm, touchDragRef.current.plantId);
-        }
-      }
-      touchDragRef.current = { active:false, plantId:null };
-      setDraggingPlant(null);
-      setTouchGhost(null);
-    }
-    window.addEventListener('touchmove', onTouchMove, { passive:false });
-    window.addEventListener('touchend', onTouchEnd);
-    return () => {
-      window.removeEventListener('touchmove', onTouchMove);
-      window.removeEventListener('touchend', onTouchEnd);
-    };
-  // eslint-disable-next-line
-  }, [bed]);
-
-  // Load bed data
-  useEffect(() => {
-    if (initialData) {
-      setBedName(initialData.name || 'Mein Hochbeet');
-      setNotes(initialData.notes || '');
-    }
-    if (user && db) {
-      const unsub = onSnapshot(doc(db,'users',user.uid,'beds',bedId), snap => {
-        if (snap.exists()) {
-          const d = snap.data();
-          if (!initialData) { setInitialData(d); setBedName(d.name||'Mein Hochbeet'); setNotes(d.notes||''); setLoaded(true); }
-        }
-      }, ()=>{});
-      return unsub;
-    }
-  // eslint-disable-next-line
-  }, [bedId, user]);
-
-  // Hydrate all season cells from saved data once
-  const appliedRef = useRef(false);
-  useEffect(() => {
-    if (!loaded || appliedRef.current || !initialData) return;
-    appliedRef.current = true;
-    if (initialData.seasonCells) {
-      bed.loadSeasonCells(initialData.seasonCells);
-    } else if (initialData.cells && Object.keys(initialData.cells).length > 0) {
-      // Migrate legacy format: single cells object → put in summer
-      bed.loadSeasonCells({ summer: initialData.cells });
-    }
-  // eslint-disable-next-line
-  }, [loaded, initialData]);
-
-  const save = useCallback(() => {
-    const data = { seasonCells:bed.seasonCells, shapeId:bed.shapeId, customMask:bed.customMask, season:bed.season, notes };
-    saveBedLocally(bedId, data);
-    if (user && db) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => {
-        setDoc(doc(db,'users',user.uid,'beds',bedId), { ...data, updatedAt:serverTimestamp() }, { merge:true }).catch(()=>{});
-      }, 800);
-    }
-  }, [bed.cells, bed.shapeId, bed.customMask, bed.season, notes, bedId, user]);
-
-  useEffect(() => { if (loaded) save(); }, [bed.cells, bed.shapeId, bed.customMask, bed.season]);
-
-  function deleteBed() {
-    localStorage.removeItem(`hb_bed_${bedId}`);
-    const ids = JSON.parse(localStorage.getItem('hb_beds') || '[]');
-    localStorage.setItem('hb_beds', JSON.stringify(ids.filter(id => id !== bedId)));
-    if (user && db) deleteDoc(doc(db, 'users', user.uid, 'beds', bedId)).catch(() => {});
-    navigate('/dashboard');
-  }
-
-  function handleNotesChange(val) {
-    setNotes(val);
+  function changeNotes(v) {
+    setNotes(v);
     clearTimeout(notesTimer.current);
-    notesTimer.current = setTimeout(() => {
-      saveBedLocally(bedId, { notes:val });
-      if (user && db) {
-        setDoc(doc(db,'users',user.uid,'beds',bedId), { notes:val, updatedAt:serverTimestamp() }, { merge:true }).catch(()=>{});
-      }
-    }, 800);
+    notesTimer.current = setTimeout(() => saveBed(bedId, { notes: v }), 600);
   }
 
-  const seasonPlants = PLANTS.filter(p => p.seasons.includes(bed.season));
+  // ── Derived ──────────────────────────────────────────────────────────────
+  const placedIds = useMemo(
+    () => [...new Set(Object.values(bed.cells).filter(v => v && typeof v === 'object').map(v => v.plantId))],
+    [bed.cells],
+  );
+  /**
+   * Legend for the canvas. Densely spaced crops are drawn as plain dots — too
+   * small to carry a label — so the bed needs somewhere to say what they are.
+   */
+  const legend = useMemo(() => {
+    const byPlant = new Map();
+    for (const item of Object.values(bed.cells)) {
+      if (!item || typeof item !== 'object') continue;
+      byPlant.set(item.plantId, (byPlant.get(item.plantId) || 0) + (item.count || 1));
+    }
+    return [...byPlant.entries()]
+      .map(([id, count]) => ({ plant: plantById(id), count }))
+      .filter(e => e.plant)
+      .sort((a, b) => b.count - a.count);
+  }, [bed.cells]);
 
-  if (!loaded) return <div style={{ height:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:T.bg, color:T.inkMute, fontFamily:'JetBrains Mono,monospace', fontSize:12 }}>Laden…</div>;
+  const selected = bed.selectedKey ? bed.cells[bed.selectedKey] : null;
+  const selectedPlant = selected ? plantById(selected.plantId) : null;
+  const rotation = useMemo(() => getRotationAnalysis(bed.seasonCells), [bed.seasonCells]);
+  const issueGroups = useMemo(() => groupPairs(bed.issues), [bed.issues]);
+  const winGroups = useMemo(() => groupPairs(bed.wins), [bed.wins]);
+  const bedTasks = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return todos.filter(t => t.bedId === bedId && t.date >= today).slice(0, 12);
+  }, [todos, bedId]);
+  const harvests = entriesForBed(bedId);
+  const harvestTotal = harvests.reduce((s, e) => s + e.amountKg, 0);
+  const deepRooters = useMemo(
+    () => placedIds.map(plantById).filter(p => p && p.rootDepth_cm > record.height),
+    [placedIds, record.height],
+  );
 
-  if (mobile) return (
-    <div style={{ height:'100%', background:T.bg, paddingTop:56, paddingBottom:100, overflow:'auto', position:'relative' }}>
-      {/* Header */}
-      <div style={{ padding:'8px 20px 12px', display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-        <div>
-          <button onClick={()=>navigate('/dashboard')} style={{ background:'none', border:'none', color:T.inkMute, cursor:'pointer', fontSize:12, fontFamily:'inherit', padding:'0 0 4px', display:'flex', alignItems:'center', gap:4 }}>← Dashboard</button>
-          <div style={LABEL}>Beet 01</div>
-          <h1 style={{ fontFamily:'Fraunces,serif', fontSize:24, margin:'2px 0 0', fontWeight:500 }}><em style={{ color:T.green, fontStyle:'italic' }}>{bedName}</em></h1>
+  // ── Actions ──────────────────────────────────────────────────────────────
+  function handlePlace(x, y, plantId) {
+    const res = bed.place(x, y, plantId);
+    if (res === 'placed' || res === 'stacked') haptic(8);
+    return res;
+  }
+
+  function handleBlocked(kind) {
+    haptic([14, 40, 14]);
+    toast({
+      message: kind === 'move' ? 'Dort ist kein Platz — der Abstand reicht nicht.' : 'Zu eng. Die Nachbarpflanze braucht mehr Abstand.',
+      tone:'bad', duration:2600,
+    });
+  }
+
+  function handleRemove(key) {
+    const item = bed.removeCell(key);
+    if (!item) return;
+    haptic(10);
+    const p = plantById(item.plantId);
+    toast({
+      message: `${p?.de || 'Pflanze'} entfernt`,
+      action: () => bed.undo(),
+    });
+  }
+
+  function handleFix() {
+    const swaps = bed.fixBed();
+    haptic(12);
+    toast({
+      message: swaps ? `${swaps} Konflikt${swaps > 1 ? 'e' : ''} gelöst` : 'Keine Konflikte zu lösen.',
+      action: swaps ? () => bed.undo() : undefined,
+      tone: swaps ? 'good' : 'default',
+    });
+  }
+
+  function handleClear() {
+    if (!Object.keys(bed.cells).length) return;
+    bed.clearSeason();
+    toast({ message:`${SEASONS.find(s => s.id === bed.season)?.de} geleert`, action: () => bed.undo() });
+  }
+
+  /**
+   * Hands the current bed and season to the generator, so the suggestion is
+   * built for these exact measurements and lands back in this season.
+   */
+  function suggestPlan() {
+    navigate(`/autoplan?bed=${bedId}&season=${bed.season}`);
+  }
+
+  function openSettings() {
+    setDraft({ name:record.name, width:record.width, depth:record.depth, height:record.height, sun:record.sun, zone:record.zone });
+    setSheet('settings');
+  }
+
+  function saveSettings() {
+    const w = Math.max(20, Math.min(600, Number(draft.width) || record.width));
+    const d = Math.max(20, Math.min(600, Number(draft.depth) || record.depth));
+    const h = Math.max(10, Math.min(150, Number(draft.height) || record.height));
+    const resized = w !== record.width || d !== record.depth;
+    saveBed(bedId, { name: draft.name.trim() || 'Mein Hochbeet', width:w, depth:d, height:h, sun:draft.sun, zone:draft.zone });
+    if (resized) {
+      // Plants keep their cm coordinates; anything now outside is pulled back
+      // in rather than the whole plan being thrown away.
+      setTimeout(() => bed.clampToBed(), 0);
+      toast({ message:`Beet auf ${w} × ${d} cm geändert — Pflanzen bleiben erhalten.`, tone:'good' });
+    } else {
+      toast({ message:'Gespeichert', tone:'good', duration:1800 });
+    }
+    setSheet(null);
+  }
+
+  function copyToSeason(target) {
+    bed.copySeason(bed.season, target);
+    toast({
+      message:`Bepflanzung nach ${SEASONS.find(s => s.id === target)?.de} kopiert`,
+      action: () => bed.undo(), tone:'good',
+    });
+  }
+
+  async function sharePlan() {
+    const lines = [
+      `${record.name} — ${record.width} × ${record.depth} cm`,
+      `Saison: ${SEASONS.find(s => s.id === bed.season)?.de}`,
+      '',
+      ...Object.values(bed.cells)
+        .filter(v => v && typeof v === 'object')
+        .reduce((acc, v) => {
+          const hit = acc.find(a => a.id === v.plantId);
+          if (hit) hit.n += v.count || 1; else acc.push({ id:v.plantId, n:v.count || 1 });
+          return acc;
+        }, [])
+        .map(({ id, n }) => {
+          const p = plantById(id);
+          return `• ${n}× ${p?.de} (${p?.spacing_cm} cm Abstand, Saat ${monthRangeLabel(p?.sowMonths || [])})`;
+        }),
+      '',
+      `Geschätzter Ertrag: ~${bed.stats.yieldKg.toFixed(1)} kg`,
+    ].join('\n');
+    try {
+      if (navigator.share) await navigator.share({ title:record.name, text:lines });
+      else { await navigator.clipboard.writeText(lines); toast({ message:'Pflanzliste kopiert', tone:'good' }); }
+    } catch { /* user cancelled the share sheet */ }
+  }
+
+  // ── Reusable panels ──────────────────────────────────────────────────────
+  const analysisPanel = (
+    <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+      {bed.issues.length === 0 && bed.wins.length === 0 && rotation.warnings.length === 0 && (
+        <div style={{ ...card, textAlign:'center', padding:24 }}>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:32, color:T.green, fontStyle:'italic' }}>~</div>
+          <div style={{ fontSize:12.5, color:T.inkDim, marginTop:6 }}>
+            {placedIds.length ? 'Keine Konflikte — die Nachbarschaft passt.' : 'Setze Pflanzen, um Hinweise zu bekommen.'}
+          </div>
         </div>
-        <div style={{ display:'flex', gap:6 }}>
-          <button onClick={bed.undo} disabled={!bed.canUndo} style={{ width:36, height:36, borderRadius:18, background:T.panel, border:`1px solid ${T.border}`, fontSize:14, cursor:'pointer', opacity:bed.canUndo?1:0.4 }}>↶</button>
-          <button onClick={bed.fixBed} style={{ width:36, height:36, borderRadius:18, background:T.terra, border:'none', color:'#fff', fontSize:13, cursor:'pointer' }}>✦</button>
-          {confirmDelete
-            ? <button onClick={deleteBed} style={{ height:36, padding:'0 12px', borderRadius:18, background:'rgba(201,84,58,0.12)', border:`1px solid rgba(201,84,58,0.4)`, color:T.bad, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>Löschen?</button>
-            : <button onClick={()=>setConfirmDelete(true)} style={{ width:36, height:36, borderRadius:18, background:T.panel, border:`1px solid ${T.border}`, cursor:'pointer', color:T.inkMute, display:'flex', alignItems:'center', justifyContent:'center' }}><TrashIcon size={14} /></button>
-          }
-        </div>
-      </div>
+      )}
+      {bed.issues.length > 0 && (
+        <Btn variant="terra" full onClick={handleFix}>✦ {bed.issues.length} Konflikt{bed.issues.length > 1 ? 'e' : ''} automatisch lösen</Btn>
+      )}
+      {issueGroups.map((g, i) => <PairCard key={`i${i}`} a={g.a} b={g.b} count={g.count} tone="bad" />)}
+      {winGroups.slice(0, 6).map((g, i) => <PairCard key={`w${i}`} a={g.a} b={g.b} count={g.count} tone="good" />)}
 
-      {/* Season pills */}
-      <div style={{ padding:'0 16px 12px', display:'flex', gap:6, overflowX:'auto' }}>
-        {SEASONS.map(s => (
-          <button key={s.id} onClick={()=>bed.setSeason(s.id)} style={{ padding:'8px 14px', borderRadius:999, fontSize:12, fontWeight:600, fontFamily:'inherit', background:bed.season===s.id?T.green:T.panel, color:bed.season===s.id?'#fff':T.ink, border:`1px solid ${bed.season===s.id?'transparent':T.border}`, cursor:'pointer', flexShrink:0, transition:'all 0.15s' }}>{s.de}</button>
-        ))}
-      </div>
-
-      {/* Stats */}
-      <div style={{ padding:'0 16px 12px', display:'flex', gap:6, flexWrap:'wrap' }}>
-        <Chip style={{ fontSize:10 }}><span style={{ color:T.inkMute }}>Pflanzen</span> <strong style={MONO}>{bed.stats.placed}</strong></Chip>
-        <Chip style={{ fontSize:10 }}><span style={{ color:T.inkMute }}>Ertrag</span> <strong style={{ ...MONO, color:T.green }}>~{bed.stats.yieldKg.toFixed(1)} kg</strong></Chip>
-        {bed.issues.length>0 && <Chip style={{ fontSize:10, background:'rgba(201,84,58,0.10)', borderColor:'rgba(201,84,58,0.3)' }}><span style={{ color:T.bad }}>⚠ {bed.issues.length} Konflikt{bed.issues.length>1?'e':''}</span></Chip>}
-      </div>
-
-      {/* Canvas */}
-      <div style={{ padding:'20px 16px 0' }}>
-        <BedCanvas
-          bed={bed}
-          showConflict={true}
-          draggingPlant={selectedPlant}
-          onCellPlace={(xCm, yCm, plantId) => bed.place(xCm, yCm, plantId)}
-          onCellRemove={bed.remove}
-          onCellMove={bed.move}
-        />
-      </div>
-
-      {/* Plant selection bar */}
-      <div style={{ padding:'16px 16px 0' }}>
-        <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:12, display:'flex', alignItems:'center', gap:12 }}>
-          {selectedPlant ? (
-            <>
-              <PlantTile plant={plantById(selectedPlant)} size={36} showLabel={false} draggable={false} />
-              <div style={{ flex:1 }}>
-                <div style={{ fontFamily:'Fraunces,serif', fontSize:14, fontWeight:600 }}>{plantById(selectedPlant).de}</div>
-                <div style={{ fontSize:11, color:T.inkDim }}>Tippe ein Feld zum Platzieren</div>
-              </div>
-              <button onClick={()=>setSelectedPlant(null)} style={{ width:26, height:26, borderRadius:13, background:T.bg, border:`1px solid ${T.border}`, fontSize:12, cursor:'pointer' }}>×</button>
-            </>
-          ) : (
-            <>
-              <div style={{ width:36, height:36, borderRadius:8, background:T.bg, border:`1.5px dashed ${T.borderHi}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, color:T.inkMute }}>+</div>
-              <div style={{ flex:1 }}>
-                <div style={{ fontSize:13, fontWeight:500 }}>Pflanze wählen</div>
-                <div style={{ fontSize:11, color:T.inkDim }}>Tippe um die Auswahl zu öffnen</div>
-              </div>
-              <button onClick={()=>setPickerOpen(true)} style={{ padding:'7px 14px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:12, fontWeight:600, fontFamily:'inherit' }}>Wählen</button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Conflict & companion details */}
-      {(bed.issues.length > 0 || bed.wins.length > 0) && (
-        <div style={{ padding:'12px 16px 0' }}>
-          <div style={LABEL}>Konflikte & Nachbarn</div>
-          <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:8 }}>
-            {bed.issues.map((iss, i) => {
-              const reason = companionReason(iss.a.id, iss.b.id);
-              return (
-                <div key={i} style={{ padding:14, borderRadius:14, background:'rgba(201,84,58,0.08)', border:`1px solid rgba(201,84,58,0.22)` }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                    <div style={{ width:8, height:8, borderRadius:4, background:T.bad, flexShrink:0 }} />
-                    <div style={{ ...LABEL, color:T.bad }}>Konflikt</div>
-                  </div>
-                  <div style={{ fontFamily:'Fraunces,serif', fontSize:15, fontWeight:500 }}>{iss.a.de} <em style={{ color:T.bad }}>vs.</em> {iss.b.de}</div>
-                  {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:5, lineHeight:1.5 }}>{reason}</div>}
-                </div>
-              );
-            })}
-            {bed.wins.slice(0, 4).map((w, i) => {
-              const reason = companionReason(w.a.id, w.b.id);
-              return (
-                <div key={`w${i}`} style={{ padding:14, borderRadius:14, background:'rgba(107,142,78,0.08)', border:`1px solid rgba(107,142,78,0.22)` }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                    <div style={{ width:8, height:8, borderRadius:4, background:T.good, flexShrink:0 }} />
-                    <div style={{ ...LABEL, color:T.good }}>Gute Nachbarn</div>
-                  </div>
-                  <div style={{ fontFamily:'Fraunces,serif', fontSize:15, fontWeight:500 }}>{w.a.de} <em style={{ color:T.good }}>+</em> {w.b.de}</div>
-                  {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:5, lineHeight:1.5 }}>{reason}</div>}
-                </div>
-              );
-            })}
+      {deepRooters.length > 0 && (
+        <div style={{ padding:14, borderRadius:14, background:T.warnBg, border:`1px solid ${T.warnBorder}` }}>
+          <div style={{ ...LABEL, color:T.warn, marginBottom:6 }}>⚠ Beettiefe</div>
+          <div style={{ fontSize:12.5, color:T.inkDim, lineHeight:1.55 }}>
+            Dein Beet ist {record.height} cm hoch. {deepRooters.map(p => `${p.de} (${p.rootDepth_cm} cm)`).join(', ')} {deepRooters.length > 1 ? 'brauchen' : 'braucht'} mehr Wurzelraum.
           </div>
         </div>
       )}
 
-      {/* Bottom sheet picker */}
-      {pickerOpen && (
+      {rotation.warnings.length > 0 && (
         <>
-          <div onClick={()=>setPickerOpen(false)} style={{ position:'fixed', inset:0, background:'rgba(31,42,27,0.4)', zIndex:40 }} />
-          <div style={{ position:'fixed', bottom:0, left:0, right:0, zIndex:50, background:T.paper, borderTopLeftRadius:24, borderTopRightRadius:24, padding:'12px 16px 100px', boxShadow:'0 -10px 30px -8px rgba(31,42,27,0.25)', maxHeight:'75vh', overflowY:'auto' }}>
-            <div style={{ width:40, height:4, background:T.borderHi, borderRadius:2, margin:'0 auto 14px' }} />
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:14 }}>
-              <h3 style={{ fontFamily:'Fraunces,serif', fontSize:20, margin:0, fontWeight:500 }}>Pflanze wählen</h3>
-              <div style={{ ...MONO, fontSize:10, color:T.inkMute }}>{seasonPlants.length} in Saison</div>
+          <div style={LABEL}>Fruchtfolge über das Jahr</div>
+          {rotation.warnings.map((w, i) => (
+            <div key={i} style={{ padding:14, borderRadius:14, background:T.warnBg, border:`1px solid ${T.warnBorder}` }}>
+              <div style={{ ...LABEL, color:T.warn, marginBottom:6 }}>Fruchtfolge-Hinweis</div>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, fontWeight:500 }}>{w.familyDe}</div>
+              <div style={{ fontSize:11.5, color:T.inkDim, marginTop:4 }}>In mehreren Saisons: {w.seasons.join(', ')}.</div>
+              {w.tip && <div style={{ fontSize:11.5, color:T.inkDim, marginTop:5, lineHeight:1.55 }}>{w.tip}</div>}
             </div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
-              {seasonPlants.map(p => (
-                <button key={p.id}
-                  onClick={()=>{ setSelectedPlant(p.id); setPickerOpen(false); }}
-                  onTouchStart={(e)=>{ startTouchDrag(p.id, e); setPickerOpen(false); }}
-                  style={{ background:selectedPlant===p.id?'#fff':T.panel, border:`1.5px solid ${selectedPlant===p.id?T.green:T.border}`, borderRadius:14, padding:12, display:'flex', flexDirection:'column', alignItems:'center', gap:6, cursor:'pointer', fontFamily:'inherit' }}>
-                  <PlantTile plant={p} size={44} showLabel={false} draggable={false} />
-                  <div style={{ fontSize:12, fontWeight:600 }}>{p.de}</div>
-                  <div style={{ fontSize:9, color:T.inkMute, ...MONO }}>{p.sun==='full'?'☀ Sonne':p.sun==='part'?'⛅ Halb':'☁ Schatten'}</div>
-                </button>
-              ))}
-            </div>
-          </div>
+          ))}
         </>
       )}
-      {/* Touch drag ghost */}
-      {touchGhost && (() => {
-        const p = plantById(touchGhost.plantId);
-        if (!p) return null;
-        const size = 60;
-        return (
-          <div style={{ position:'fixed', left:touchGhost.x - size/2, top:touchGhost.y - size - 18, width:size, height:size, borderRadius:'50%', background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`, zIndex:1000, pointerEvents:'none', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 16px rgba(0,0,0,0.3)' }}>
-            <span style={{ fontFamily:'Fraunces,serif', fontSize:24, color:'rgba(255,255,255,0.95)', fontStyle:'italic' }}>{p.glyph[0]}</span>
+    </div>
+  );
+
+  const carePanel = (
+    <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+      <div>
+        <div style={{ ...LABEL, marginBottom:8 }}>Anstehende Aufgaben</div>
+        {bedTasks.length === 0 ? (
+          <div style={{ ...card, fontSize:12.5, color:T.inkDim }}>
+            Für dieses Beet steht gerade nichts an. Aufgaben entstehen automatisch aus deiner Bepflanzung.
           </div>
+        ) : (
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {bedTasks.map(t => {
+              const kind = TASK_KINDS[t.kind] || TASK_KINDS.care;
+              return (
+                <div key={t.id} style={{ ...card, display:'flex', gap:11, alignItems:'flex-start', opacity:t.done ? 0.5 : 1 }}>
+                  <button onClick={() => toggleTodo(t.id)} aria-label={t.done ? 'Als offen markieren' : 'Als erledigt markieren'}
+                    style={{ width:24, height:24, minWidth:24, borderRadius:7, marginTop:1, border:`1.5px solid ${t.done ? T.green : T.borderHi}`, background:t.done ? T.green : 'transparent', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                    {t.done && <span style={{ color:'var(--panel)', fontSize:12, fontWeight:700, lineHeight:1 }}>✓</span>}
+                  </button>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, textDecoration:t.done ? 'line-through' : 'none' }}>
+                      <span aria-hidden="true" style={{ marginRight:6 }}>{kind.icon}</span>{t.title}
+                    </div>
+                    <div style={{ ...MONO, fontSize:9.5, color:T.inkMute, marginTop:2 }}>
+                      {new Intl.DateTimeFormat('de-DE', { weekday:'short', day:'2-digit', month:'short' }).format(new Date(t.date + 'T00:00:00'))} · {kind.de}
+                    </div>
+                    {t.detail && <div style={{ fontSize:11.5, color:T.inkDim, marginTop:5, lineHeight:1.5 }}>{t.detail}</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {placedIds.length > 0 && (
+        <div>
+          <div style={{ ...LABEL, marginBottom:8 }}>Pflegeanleitung</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {placedIds.map(plantById).filter(Boolean).map(p => (
+              <button key={p.id} onClick={() => { setInspect(p.id); setSheet('plant'); }}
+                style={{ ...card, textAlign:'left', cursor:'pointer', fontFamily:'inherit', color:T.ink }}>
+                <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:6 }}>
+                  <span aria-hidden="true" style={{ width:24, height:24, borderRadius:'50%', background:`oklch(0.62 0.1 ${p.hue})`, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Fraunces',serif", fontStyle:'italic', fontSize:12 }}>{p.glyph[0]}</span>
+                  <span style={{ fontWeight:600, fontSize:13 }}>{p.de}</span>
+                  <span style={{ ...MONO, fontSize:9.5, color:T.inkMute, marginLeft:'auto' }}>{FEEDERS[p.feeder]?.short}</span>
+                </div>
+                <div style={{ fontSize:11.5, color:T.inkDim, lineHeight:1.55 }}>{p.careNotes}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const harvestPanel = (
+    <div>
+      <div style={{ ...LABEL, marginBottom:8 }}>Ernte erfassen</div>
+      <div style={{ ...card, marginBottom:14 }}>
+        <select value={harvestPlant} onChange={e => setHarvestPlant(e.target.value)} aria-label="Pflanze wählen"
+          style={{ ...field, marginBottom:8 }}>
+          <option value="">Pflanze wählen…</option>
+          {placedIds.map(pid => plantById(pid)).filter(Boolean).map(p => <option key={p.id} value={p.id}>{p.de}</option>)}
+        </select>
+        <div style={{ display:'flex', gap:8 }}>
+          <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="Menge in kg"
+            aria-label="Erntemenge in Kilogramm"
+            value={harvestAmount} onChange={e => setHarvestAmount(e.target.value)}
+            style={{ ...field, flex:1, ...MONO }} />
+          <Btn variant="primary" disabled={!harvestPlant || !harvestAmount}
+            onClick={() => {
+              addHarvest({ bedId, plantId:harvestPlant, season:bed.season, amountKg:harvestAmount });
+              setHarvestAmount('');
+              toast({ message:'Ernte eingetragen', tone:'good', duration:1800 });
+            }}>Eintragen</Btn>
+        </div>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
+        <Stat label="Geplant" value={`~${bed.stats.yieldKg.toFixed(1)} kg`} tone={T.inkDim} />
+        <Stat label="Geerntet" value={`${harvestTotal.toFixed(1)} kg`} tone={T.green} />
+      </div>
+
+      {harvests.length === 0 ? (
+        <div style={{ fontSize:12.5, color:T.inkMute, textAlign:'center', padding:'16px 0' }}>Noch keine Ernte eingetragen.</div>
+      ) : (
+        <>
+          <div style={{ ...LABEL, marginBottom:6 }}>Verlauf</div>
+          {[...harvests].reverse().map(e => {
+            const p = plantById(e.plantId);
+            return (
+              <div key={e.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'11px 0', borderBottom:`1px solid ${T.border}` }}>
+                <span aria-hidden="true" style={{ width:22, height:22, borderRadius:'50%', background:p ? `oklch(0.62 0.1 ${p.hue})` : T.border, flexShrink:0 }} />
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:12.5, fontWeight:600 }}>{p?.de || e.plantId}</div>
+                  <div style={{ ...MONO, fontSize:10, color:T.inkMute }}>{e.date}</div>
+                </div>
+                <div style={{ ...MONO, fontSize:12.5, color:T.green, fontWeight:700 }}>{e.amountKg.toFixed(1)} kg</div>
+                <IconBtn size={34} tone="plain" label="Eintrag löschen" onClick={() => deleteHarvest(e.id)}>×</IconBtn>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+
+  const notesPanel = (
+    <div>
+      <div style={{ ...LABEL, marginBottom:8 }}>Notizen zu diesem Beet</div>
+      <textarea value={notes} onChange={e => changeNotes(e.target.value)}
+        placeholder="Beobachtungen, Sorten, Erinnerungen…"
+        style={{ ...field, minHeight:160, lineHeight:1.6, fontSize:14 }} />
+      <div style={{ ...MONO, fontSize:10, color:T.inkMute, marginTop:6 }}>Wird automatisch gespeichert.</div>
+
+      <div style={{ ...LABEL, margin:'20px 0 8px' }}>Saison übertragen</div>
+      <div style={{ ...card }}>
+        <div style={{ fontSize:12.5, color:T.inkDim, lineHeight:1.55, marginBottom:10 }}>
+          Übernimm die Bepflanzung von <strong>{SEASONS.find(s => s.id === bed.season)?.de}</strong> in eine andere Saison — als Startpunkt für die Fruchtfolge.
+        </div>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+          {SEASONS.filter(s => s.id !== bed.season).map(s => (
+            <Btn key={s.id} size="sm" onClick={() => copyToSeason(s.id)}>→ {s.de}</Btn>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const settingsPanel = draft && (
+    <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+      <div>
+        <div style={{ ...LABEL, marginBottom:6 }}>Name</div>
+        <input value={draft.name} onChange={e => setDraft(d => ({ ...d, name:e.target.value }))} style={field} aria-label="Beetname" />
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
+        {[['width','Breite'], ['depth','Tiefe'], ['height','Höhe']].map(([k, l]) => (
+          <div key={k}>
+            <div style={{ ...LABEL, marginBottom:6 }}>{l} (cm)</div>
+            <input type="number" inputMode="numeric" value={draft[k]}
+              onChange={e => setDraft(d => ({ ...d, [k]:e.target.value }))}
+              style={{ ...field, ...MONO }} aria-label={`${l} in Zentimetern`} />
+          </div>
+        ))}
+      </div>
+      <div style={{ ...card, ...MONO, fontSize:12, color:T.inkDim, textAlign:'center' }}>
+        {((Number(draft.width) * Number(draft.depth)) / 10000).toFixed(2)} m² Anbaufläche
+      </div>
+      <div>
+        <div style={{ ...LABEL, marginBottom:6 }}>Sonnenstunden pro Tag</div>
+        <div style={{ display:'flex', gap:6 }}>
+          {['<3', '3-5', '5-7', '7+'].map(s => (
+            <button key={s} onClick={() => setDraft(d => ({ ...d, sun:s }))}
+              style={{ flex:1, minHeight:44, borderRadius:12, cursor:'pointer', fontWeight:600, fontFamily:'inherit', fontSize:13,
+                background:draft.sun === s ? T.ochre : T.panel, color:draft.sun === s ? 'var(--panel)' : T.ink,
+                border:`1px solid ${draft.sun === s ? 'transparent' : T.border}` }}>{s}h</button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div style={{ ...LABEL, marginBottom:6 }}>Klimazone</div>
+        <select value={draft.zone} onChange={e => setDraft(d => ({ ...d, zone:e.target.value }))} style={field} aria-label="Klimazone">
+          <option value="zone7">Mitteleuropa · Zone 7</option>
+          <option value="zone8">Süddeutschland · Zone 8</option>
+          <option value="zone6">Norddeutschland · Zone 6</option>
+          <option value="zone9">Österreich Tiefland · Zone 9</option>
+          <option value="zone5">Alpen · Zone 5–6</option>
+        </select>
+      </div>
+
+      <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:14, display:'flex', flexDirection:'column', gap:8 }}>
+        <Btn onClick={sharePlan} full>↗ Pflanzliste teilen</Btn>
+        <Btn onClick={() => window.print()} full>⎙ Plan drucken</Btn>
+        <Btn onClick={() => {
+          const copy = duplicateBed(bedId);
+          setSheet(null);
+          if (copy) navigate(`/bed/${copy.id}`);
+        }} full>⧉ Beet duplizieren</Btn>
+        <Btn variant="danger" full onClick={() => {
+          if (!confirmDelete) { setConfirmDelete(true); return; }
+          removeBed(bedId);
+          navigate('/beds');
+        }}>
+          <TrashIcon /> {confirmDelete ? 'Wirklich löschen?' : 'Beet löschen'}
+        </Btn>
+        {confirmDelete && <Btn variant="quiet" full onClick={() => setConfirmDelete(false)}>Abbrechen</Btn>}
+      </div>
+    </div>
+  );
+
+  // ── Shared chrome ────────────────────────────────────────────────────────
+  const seasonRail = (
+    <div className="hscroll" style={{ display:'flex', gap:6 }}>
+      {SEASONS.map(s => {
+        const on = bed.season === s.id;
+        const n = bed.seasonSummary[s.id]?.count || 0;
+        return (
+          <button key={s.id} onClick={() => { bed.setSeason(s.id); bed.setSelectedKey(null); }}
+            aria-pressed={on}
+            style={{
+              padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit',
+              flexShrink:0, cursor:'pointer', minHeight:42, display:'flex', alignItems:'center', gap:7,
+              background:on ? T.green : T.panel, color:on ? 'var(--panel)' : T.ink,
+              border:`1px solid ${on ? 'transparent' : T.border}`,
+            }}>
+            <span aria-hidden="true" style={{ opacity:on ? 1 : 0.6 }}>{s.glyph}</span>
+            {s.de}
+            {n > 0 && (
+              <span style={{ ...MONO, fontSize:9.5, padding:'1px 6px', borderRadius:999, background:on ? 'rgba(255,255,255,0.22)' : T.bg, color:on ? 'var(--panel)' : T.inkMute }}>{n}</span>
+            )}
+          </button>
         );
-      })()}
+      })}
+    </div>
+  );
+
+  const statsRow = (
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(4, minmax(0, 1fr))', gap:7 }}>
+      <Stat label="Pflanzen" value={bed.stats.placed} />
+      <Stat label="Sorten" value={bed.stats.kinds} />
+      <Stat label="Belegt" value={`${bed.stats.coverage}%`} />
+      <Stat label="Ertrag" value={`~${bed.stats.yieldKg.toFixed(1)} kg`} tone={T.green} />
+    </div>
+  );
+
+  const legendRow = legend.length > 0 && (
+    <div className="hscroll" style={{ display:'flex', gap:6, paddingBottom:2 }}>
+      {legend.map(({ plant, count }) => (
+        <button key={plant.id} onClick={() => { setInspect(plant.id); setSheet('plant'); }}
+          title={`${plant.de} — ${plant.spacing_cm} cm Abstand`}
+          style={{
+            display:'inline-flex', alignItems:'center', gap:7, flexShrink:0,
+            padding:'7px 12px', borderRadius:999, minHeight:38, cursor:'pointer',
+            background:T.panel, border:`1px solid ${T.border}`, color:T.ink,
+            fontFamily:'inherit', fontSize:12, fontWeight:600,
+          }}>
+          <span aria-hidden="true" style={{
+            width:13, height:13, borderRadius:7, flexShrink:0,
+            background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${plant.hue}), oklch(0.50 0.15 ${plant.hue}))`,
+          }} />
+          {plant.de}
+          <span style={{ ...MONO, fontSize:10, color:T.inkMute, fontWeight:500 }}>×{count}</span>
+        </button>
+      ))}
+    </div>
+  );
+
+  const canvas = (
+    <BedCanvas
+      bed={bed}
+      armedPlant={armedPlant}
+      selectedKey={bed.selectedKey}
+      onSelect={bed.setSelectedKey}
+      onPlace={handlePlace}
+      onMove={bed.move}
+      onBlocked={handleBlocked}
+      showSun={showSun}
+      showConflict
+    />
+  );
+
+  /**
+   * Contextual bar for the selected plant — what replaced tap-to-delete.
+   * Wraps to a second row on a phone so every control keeps a real touch
+   * target instead of being squeezed until the label truncates.
+   */
+  const selectionBar = selectedPlant && (
+    <div style={{
+      ...card, padding:'9px 10px', borderColor:T.green, background:T.goodBg,
+      display:'flex', flexDirection:mobile ? 'column' : 'row',
+      alignItems:mobile ? 'stretch' : 'center', gap:8,
+    }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, flex:1, minWidth:0 }}>
+        <span aria-hidden="true" style={{ width:34, height:34, borderRadius:'50%', flexShrink:0, background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${selectedPlant.hue}), oklch(0.50 0.15 ${selectedPlant.hue}))`, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Fraunces',serif", fontStyle:'italic' }}>{selectedPlant.glyph[0]}</span>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:13.5, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{selectedPlant.de}</div>
+          <div style={{ ...MONO, fontSize:9.5, color:T.inkMute, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+            Ziehen = verschieben · {selectedPlant.spacing_cm} cm Abstand
+          </div>
+        </div>
+        <IconBtn size={38} tone="plain" label="Auswahl aufheben" onClick={() => bed.setSelectedKey(null)}>×</IconBtn>
+      </div>
+      <div style={{ display:'flex', alignItems:'center', gap:8, justifyContent:mobile ? 'space-between' : 'flex-end', flexShrink:0 }}>
+        <IconBtn size={40} label="Eine weniger" onClick={() => bed.decrement(bed.selectedKey)}>−</IconBtn>
+        <span style={{ ...MONO, fontSize:15, fontWeight:700, minWidth:26, textAlign:'center' }}>{selected.count || 1}</span>
+        <IconBtn size={40} label="Eine mehr" onClick={() => bed.increment(bed.selectedKey)}>+</IconBtn>
+        <IconBtn size={40} label="Pflanzen-Info" onClick={() => { setInspect(selectedPlant.id); setSheet('plant'); }}>ⓘ</IconBtn>
+        <IconBtn size={40} tone="danger" label="Ganz entfernen" onClick={() => handleRemove(bed.selectedKey)}><TrashIcon size={15} /></IconBtn>
+      </div>
+    </div>
+  );
+
+  /**
+   * An empty season is exactly when a generated plan is worth most, so the
+   * offer appears there rather than being buried in a menu.
+   */
+  const emptySeasonCta = Object.keys(bed.cells).length === 0 && (
+    <div style={{ ...card, borderStyle:'dashed', borderColor:T.borderHi, display:'flex', alignItems:'center', gap:12, padding:'12px 14px' }}>
+      <span aria-hidden="true" style={{ fontSize:20, lineHeight:1, flexShrink:0 }}>✦</span>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:13.5, fontWeight:600 }}>
+          {SEASONS.find(sx => sx.id === bed.season)?.de} ist noch leer
+        </div>
+        <div style={{ fontSize:11.5, color:T.inkDim, lineHeight:1.45 }}>
+          Lass dir eine Mischkultur für {record.width} × {record.depth} cm vorschlagen.
+        </div>
+      </div>
+      <Btn variant="terra" onClick={suggestPlan}>Vorschlag</Btn>
+    </div>
+  );
+
+  const armedBar = (
+    <div style={{ ...card, display:'flex', alignItems:'center', gap:11, padding:'10px 12px' }}>
+      {armedPlant ? (
+        <>
+          <span aria-hidden="true" style={{ width:36, height:36, borderRadius:'50%', flexShrink:0, background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${plantById(armedPlant).hue}), oklch(0.50 0.15 ${plantById(armedPlant).hue}))`, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Fraunces',serif", fontStyle:'italic' }}>{plantById(armedPlant).glyph[0]}</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13.5, fontWeight:600 }}>{plantById(armedPlant).de}</div>
+            <div style={{ fontSize:11.5, color:T.inkDim }}>Tippe auf das Beet zum Pflanzen</div>
+          </div>
+          <Btn size="sm" onClick={() => setSheet('picker')}>Wechseln</Btn>
+          <IconBtn size={38} tone="plain" label="Auswahl aufheben" onClick={() => setArmedPlant(null)}>×</IconBtn>
+        </>
+      ) : (
+        <>
+          <span aria-hidden="true" style={{ width:36, height:36, borderRadius:10, flexShrink:0, background:T.bg, border:`1.5px dashed ${T.borderHi}`, display:'flex', alignItems:'center', justifyContent:'center', color:T.inkMute, fontSize:18 }}>+</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13.5, fontWeight:600 }}>Pflanze wählen</div>
+            <div style={{ fontSize:11.5, color:T.inkDim }}>Suchen, filtern, pflanzen</div>
+          </div>
+          <Btn variant="primary" onClick={() => setSheet('picker')}>Auswählen</Btn>
+        </>
+      )}
+    </div>
+  );
+
+  const toolRow = (
+    <div className="hscroll no-print" style={{ display:'flex', gap:6 }}>
+      {/* An empty season already offers this on its own card — one prompt is enough. */}
+      {!emptySeasonCta && (
+        <button onClick={suggestPlan}
+          style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42, background:T.terra, color:'var(--panel)', border:'1px solid transparent' }}>
+          ✦ Vorschlag
+        </button>
+      )}
+      {[
+        { id:'analysis', label:`Analyse${bed.issues.length ? ` · ${bed.issues.length}` : ''}`, tone: bed.issues.length ? 'bad' : null },
+        { id:'care',     label:'Pflege' },
+        { id:'harvest',  label:'Ernte' },
+        { id:'notes',    label:'Notizen' },
+      ].map(t => (
+        <button key={t.id} onClick={() => setSheet(t.id)}
+          style={{
+            padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit',
+            flexShrink:0, cursor:'pointer', minHeight:42,
+            background:t.tone === 'bad' ? T.badBg : T.panel,
+            color:t.tone === 'bad' ? T.bad : T.ink,
+            border:`1px solid ${t.tone === 'bad' ? T.badBorder : T.border}`,
+          }}>{t.label}</button>
+      ))}
+      <button onClick={() => setShowSun(s => !s)} aria-pressed={showSun}
+        style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42, background:showSun ? T.ochre : T.panel, color:showSun ? 'var(--panel)' : T.ink, border:`1px solid ${showSun ? 'transparent' : T.border}` }}>
+        ☀ Sonne
+      </button>
+      <button onClick={handleClear}
+        style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42, background:T.panel, color:T.inkDim, border:`1px solid ${T.border}` }}>
+        Saison leeren
+      </button>
+    </div>
+  );
+
+  const sheets = (
+    <>
+      <Sheet open={sheet === 'picker'} onClose={() => setSheet(null)} title="Pflanze wählen"
+        subtitle={`${SEASONS.find(s => s.id === bed.season)?.de} · ${record.width} × ${record.depth} cm`}>
+        <PlantPicker
+          season={bed.season}
+          placedIds={placedIds}
+          armedPlant={armedPlant}
+          bedHeightCm={record.height}
+          compact={mobile}
+          onPick={(id) => { setArmedPlant(id); setSheet(null); haptic(6); }}
+        />
+      </Sheet>
+
+      <Sheet open={sheet === 'analysis'} onClose={() => setSheet(null)} title="Analyse" subtitle="Nachbarschaft & Fruchtfolge">{analysisPanel}</Sheet>
+      <Sheet open={sheet === 'care'} onClose={() => setSheet(null)} title="Pflege" subtitle="Aufgaben aus deiner Bepflanzung">{carePanel}</Sheet>
+      <Sheet open={sheet === 'harvest'} onClose={() => setSheet(null)} title="Ernte" subtitle={`${harvestTotal.toFixed(1)} kg erfasst`}>{harvestPanel}</Sheet>
+      <Sheet open={sheet === 'notes'} onClose={() => setSheet(null)} title="Notizen & Saison">{notesPanel}</Sheet>
+
+      <Sheet open={sheet === 'settings'} onClose={() => { setSheet(null); setConfirmDelete(false); }} title="Beet-Einstellungen"
+        footer={<Btn variant="primary" full size="lg" onClick={saveSettings}>Speichern</Btn>}>
+        {settingsPanel}
+      </Sheet>
+
+      <Sheet open={sheet === 'plant'} onClose={() => setSheet(null)} title={plantById(inspect)?.de || 'Pflanze'}>
+        {inspect && <PlantDetail plant={plantById(inspect)} />}
+      </Sheet>
+    </>
+  );
+
+  // ── Mobile ───────────────────────────────────────────────────────────────
+  if (mobile) return (
+    <div style={{ minHeight:'100vh', background:T.bg, paddingBottom:'calc(var(--tabbar-h) + 12px)' }}>
+      <header className="no-print" style={{
+        position:'sticky', top:0, zIndex:20, background:'color-mix(in srgb, var(--bg) 92%, transparent)',
+        backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)',
+        padding:`calc(10px + var(--safe-t)) 14px 10px`, borderBottom:`1px solid ${T.border}`,
+        display:'flex', alignItems:'center', gap:8,
+      }}>
+        <IconBtn size={40} tone="plain" label="Zurück zu den Beeten" onClick={() => navigate('/beds')}>‹</IconBtn>
+        <button onClick={openSettings} style={{ flex:1, minWidth:0, background:'none', border:'none', textAlign:'left', cursor:'pointer', padding:0, fontFamily:'inherit', color:T.ink }}>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:19, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{record.name}</div>
+          <div style={{ ...MONO, fontSize:9.5, color:T.inkMute }}>{record.width} × {record.depth} cm · bearbeiten</div>
+        </button>
+        <IconBtn size={40} label="Letzte Änderung rückgängig" disabled={!bed.canUndo} onClick={bed.undo}>↶</IconBtn>
+        <IconBtn size={40} label="Änderung wiederholen" disabled={!bed.canRedo} onClick={bed.redo}>↷</IconBtn>
+        <IconBtn size={40} label="Beet-Einstellungen" onClick={openSettings}>⚙</IconBtn>
+      </header>
+
+      <div style={{ padding:'12px 14px 0' }}>{seasonRail}</div>
+      <div style={{ padding:'12px 14px 0' }}>{statsRow}</div>
+      <div style={{ padding:'14px 14px 0' }}>{canvas}</div>
+      {legendRow && <div style={{ padding:'10px 14px 0' }}>{legendRow}</div>}
+      <div style={{ padding:'10px 14px 0', display:'flex', flexDirection:'column', gap:10 }}>
+        {selectionBar}
+        {emptySeasonCta}
+        {armedBar}
+        {toolRow}
+      </div>
+      {sheets}
       <TabBar active="beds" />
     </div>
   );
 
-  // ─── DESKTOP ────────────────────────────────────────────────────────────────
+  // ── Desktop ──────────────────────────────────────────────────────────────
   return (
-    <>
-    <div style={{ display:'grid', gridTemplateColumns:'270px 1fr 320px', height:'100vh', background:T.bg }}>
-      {/* LEFT PANEL */}
-      <aside style={{ borderRight:`1px solid ${T.border}`, padding:20, overflow:'auto', background:T.paper, scrollbarWidth:'thin' }}>
-        {/* Logo */}
-        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20 }}>
-          <button onClick={()=>navigate('/dashboard')} style={{ background:'none', border:'none', cursor:'pointer', padding:0 }}>
-            <div style={{ width:32, height:32, borderRadius:8, background:T.green, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:'Fraunces,serif', fontStyle:'italic', fontSize:18 }}>H</div>
-          </button>
-          <div>
-            <div style={{ fontFamily:'Fraunces,serif', fontSize:16, fontWeight:600 }}>Hochbeet</div>
-            <div style={{ ...MONO, fontSize:9, color:T.inkMute }}>PLANER · v0.1</div>
-          </div>
+    <div style={{ minHeight:'100vh', background:T.bg, display:'grid', gridTemplateColumns:'320px 1fr 360px' }}>
+      <aside className="no-print" style={{ borderRight:`1px solid ${T.border}`, background:T.paper, padding:20, height:'100vh', overflow:'auto', position:'sticky', top:0 }}>
+        <div style={{ marginBottom:18 }}>
+          <LogoLockup size={36} onClick={() => navigate('/dashboard')} />
         </div>
-
-        {/* Season */}
-        <div style={LABEL}>Saison · Season</div>
-        <div style={{ display:'flex', gap:4, marginBottom:18, padding:4, background:T.bg, borderRadius:12, border:`1px solid ${T.border}` }}>
-          {SEASONS.map(s => (
-            <button key={s.id} onClick={()=>bed.setSeason(s.id)} style={{ flex:1, padding:'8px 4px', border:'none', borderRadius:8, background:bed.season===s.id?'#fff':'transparent', boxShadow:bed.season===s.id?'0 1px 3px rgba(0,0,0,0.06)':'none', color:bed.season===s.id?T.ink:T.inkMute, cursor:'pointer', fontSize:11, fontWeight:600, fontFamily:'inherit' }}>{s.de.slice(0,3)}</button>
-          ))}
-        </div>
-
-        {/* Plants */}
-        <div style={LABEL}>Pflanzen · Plants</div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:20 }}>
-          {seasonPlants.map(p => (
-            <div key={p.id} draggable
-              onDragStart={e=>{e.dataTransfer.setData('plant',p.id);setDraggingPlant(p.id);}}
-              onDragEnd={()=>setDraggingPlant(null)}
-              onClick={()=>setDraggingPlant(draggingPlant===p.id?null:p.id)}
-              onTouchStart={(e)=>startTouchDrag(p.id, e)}
-              style={{ background:draggingPlant===p.id?'#fff':T.panel, border:`1.5px solid ${draggingPlant===p.id?T.green:T.border}`, borderRadius:14, padding:10, cursor:'grab', transition:'all 0.15s', display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
-              <PlantTile plant={p} size={42} showLabel={false} draggable={false} />
-              <div style={{ fontSize:12, fontWeight:600 }}>{p.de}</div>
-              <div style={{ fontSize:9, color:T.inkMute, ...MONO }}>{p.sun==='full'?'☀':p.sun==='part'?'⛅':'☁'}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Shape picker */}
-        <div style={LABEL}>Beetform · Shape</div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, marginBottom:16 }}>
-          {Object.values(SHAPES).map(s => (
-            <button key={s.id} onClick={()=>bed.setShape(s.id)} style={{ padding:'8px 6px', fontSize:11, border:'none', borderRadius:999, background:bed.shapeId===s.id?T.green:T.panel, color:bed.shapeId===s.id?'#fff':T.ink, cursor:'pointer', fontWeight:600, fontFamily:'inherit', transition:'all 0.15s' }}>{s.de}</button>
-          ))}
-        </div>
-
-        {/* Freeform controls */}
-        {bed.isFreeform && (
-          <div style={{ padding:12, background:T.panel, border:`1px dashed ${T.terra}`, borderRadius:12 }}>
-            <div style={{ ...LABEL, color:T.terra, marginBottom:8 }}>Frei zeichnen</div>
-            <button onClick={()=>bed.setShapeEditing(!bed.shapeEditing)} style={{ width:'100%', padding:'8px 12px', border:'none', borderRadius:999, background:bed.shapeEditing?T.terra:T.panel, color:bed.shapeEditing?'#fff':T.ink, cursor:'pointer', fontSize:12, fontWeight:600, fontFamily:'inherit', marginBottom:6 }}>
-              {bed.shapeEditing?'✓ Form fertig':'✎ Form bearbeiten'}
-            </button>
-            {bed.shapeEditing && (
-              <div style={{ display:'flex', gap:6, marginTop:6 }}>
-                <button onClick={bed.clearMask} style={{ flex:1, padding:'6px 4px', border:`1px solid ${T.border}`, borderRadius:999, background:T.panel, cursor:'pointer', fontSize:10, fontFamily:'inherit' }}>Leer</button>
-                <button onClick={bed.resetMask} style={{ flex:1, padding:'6px 4px', border:`1px solid ${T.border}`, borderRadius:999, background:T.panel, cursor:'pointer', fontSize:10, fontFamily:'inherit' }}>Reset</button>
-              </div>
-            )}
-            <div style={{ marginTop:10, fontSize:10, color:T.inkDim, lineHeight:1.4 }}>{bed.shapeEditing?'Klicken oder ziehen, um Felder hinzuzufügen / zu entfernen.':'Aktiviere den Modus, um die Form frei zu zeichnen.'}</div>
-          </div>
-        )}
+        <PlantPicker
+          season={bed.season}
+          placedIds={placedIds}
+          armedPlant={armedPlant}
+          bedHeightCm={record.height}
+          compact
+          onPick={(id) => setArmedPlant(a => (a === id ? null : id))}
+        />
       </aside>
 
-      {/* CENTER */}
-      <main style={{ overflow:'auto', padding:30, scrollbarWidth:'thin' }}>
-        <header style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom:22 }}>
-          <div>
-            <div style={LABEL}>Beet 01 · {bed.shape.de}</div>
-            <h1 style={{ fontFamily:'Fraunces,serif', fontSize:38, margin:'4px 0 0', fontWeight:500 }}>Mein <em style={{ color:T.green, fontStyle:'italic' }}>{bedName}</em></h1>
+      <main style={{ padding:'26px 28px 40px', minWidth:0 }}>
+        <header style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:16, marginBottom:18, flexWrap:'wrap' }}>
+          <div style={{ minWidth:0, flex:'1 1 240px' }}>
+            <div style={{ ...LABEL, whiteSpace:'nowrap' }}>{record.width} × {record.depth} × {record.height} cm</div>
+            <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, margin:'4px 0 0', overflowWrap:'anywhere' }}>
+              <em style={{ color:T.green, fontStyle:'italic' }}>{record.name}</em>
+            </h1>
           </div>
-          <div style={{ display:'flex', gap:8 }}>
-            <Btn onClick={bed.undo} disabled={!bed.canUndo} title="Rückgängig">↶</Btn>
-            <Btn onClick={bed.redo} disabled={!bed.canRedo} title="Wiederholen">↷</Btn>
-            <Btn onClick={()=>setShowSun(s=>!s)} style={{ background:showSun?T.ochre:T.panel, color:showSun?'#fff':T.ink, border:'none' }}>☀ Sonne</Btn>
-            <Btn onClick={bed.fixBed} variant="terra">✦ Fix my bed</Btn>
-            <Btn onClick={()=>navigate(`/bed/${bedId}/seasons`)}>🗓 Saison</Btn>
-            {confirmDelete
-              ? <><Btn onClick={deleteBed} style={{ background:'rgba(201,84,58,0.12)', color:T.bad, borderColor:'rgba(201,84,58,0.4)' }}>Ja, löschen</Btn><Btn onClick={()=>setConfirmDelete(false)}>Abbrechen</Btn></>
-              : <Btn onClick={()=>setConfirmDelete(true)} title="Beet löschen"><TrashIcon /></Btn>
-            }
+          <div className="no-print" style={{ display:'flex', gap:8, flexShrink:0, flexWrap:'wrap', justifyContent:'flex-end' }}>
+            <IconBtn label="Letzte Änderung rückgängig" disabled={!bed.canUndo} onClick={bed.undo}>↶</IconBtn>
+            <IconBtn label="Änderung wiederholen" disabled={!bed.canRedo} onClick={bed.redo}>↷</IconBtn>
+            <IconBtn label="Sonnenverlauf einblenden" active={showSun} onClick={() => setShowSun(s => !s)}>☀</IconBtn>
+            <Btn variant="terra" onClick={suggestPlan}>✦ Vorschlag</Btn>
+            <Btn onClick={() => navigate(`/bed/${bedId}/seasons`)}>🗓 Jahresplan</Btn>
+            <Btn onClick={openSettings}>⚙ Einstellungen</Btn>
           </div>
         </header>
 
-        {/* Stats */}
-        <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:22 }}>
-          <Chip><span style={{ color:T.inkMute }}>Pflanzen</span> <strong style={MONO}>{bed.stats.placed}</strong></Chip>
-          <Chip><span style={{ color:T.inkMute }}>Ertrag</span> <strong style={{ ...MONO, color:T.green }}>~{bed.stats.yieldKg.toFixed(1)} kg</strong></Chip>
-          <Chip style={{ background:bed.issues.length?'rgba(201,84,58,0.10)':T.panel, borderColor:bed.issues.length?'rgba(201,84,58,0.3)':T.border }}>
-            <span style={{ color:bed.issues.length?T.bad:T.inkMute }}>Konflikte</span>
-            <strong style={{ ...MONO, color:bed.issues.length?T.bad:T.inkMute }}>{bed.issues.length}</strong>
-          </Chip>
+        <div style={{ marginBottom:14 }}>{seasonRail}</div>
+        <div style={{ marginBottom:16 }}>{statsRow}</div>
+        {canvas}
+        {legendRow && <div style={{ marginTop:12 }}>{legendRow}</div>}
+        <div style={{ marginTop:12, display:'flex', flexDirection:'column', gap:10 }}>
+          {selectionBar}
+          {emptySeasonCta}
+          {armedBar}
         </div>
-
-        <div>
-          <BedCanvas
-            bed={bed}
-            showConflict={true}
-            draggingPlant={draggingPlant}
-            onCellPlace={(xCm, yCm, plantId) => bed.place(xCm, yCm, plantId)}
-            onCellRemove={bed.remove}
-            onCellMove={bed.move}
-          />
-        </div>
-
-        <div style={{ marginTop:20, display:'flex', gap:18, justifyContent:'center', fontSize:11, color:T.inkMute, ...MONO }}>
-          {bed.shapeEditing ? (
-            <><span>● Klick = Feld an/aus</span><span>● Ziehen zum Malen</span></>
-          ) : (
-            <><span>● Klick zum Platzieren</span><span>● Drag &amp; Drop</span><span>● Klick auf Pflanze = entfernen</span></>
-          )}
+        <div className="no-print" style={{ marginTop:14, ...MONO, fontSize:11, color:T.inkMute, display:'flex', gap:18, flexWrap:'wrap' }}>
+          <span>● Klick = auswählen</span>
+          <span>● Ziehen = verschieben</span>
+          <span>● Doppelklick = zoomen</span>
+          <span>● Strg + Scrollen = zoomen</span>
         </div>
       </main>
 
-      {/* RIGHT PANEL */}
-      <aside style={{ borderLeft:`1px solid ${T.border}`, padding:20, overflow:'auto', background:T.paper, scrollbarWidth:'thin' }}>
-        <div style={{ display:'flex', gap:4, marginBottom:18, padding:4, background:T.bg, borderRadius:12, border:`1px solid ${T.border}` }}>
-          {[{id:'plants',label:'Tipps'},{id:'issues',label:'Konflikte'},{id:'care',label:'Pflege'},{id:'harvest',label:'Ernte'}].map(t => (
-            <button key={t.id} onClick={()=>setActiveTab(t.id)} style={{ flex:1, padding:'8px 2px', border:'none', borderRadius:8, background:activeTab===t.id?'#fff':'transparent', boxShadow:activeTab===t.id?'0 1px 3px rgba(0,0,0,0.06)':'none', color:activeTab===t.id?T.ink:T.inkMute, cursor:'pointer', fontSize:11, fontWeight:600, fontFamily:'inherit' }}>{t.label}</button>
-          ))}
-        </div>
-
-        {activeTab==='issues' && (() => {
-          const rotation = getRotationAnalysis(bed.seasonCells);
-          return (
-            <div>
-              {bed.issues.length===0 && bed.wins.length===0 && rotation.warnings.length===0 && (
-                <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:22, textAlign:'center' }}>
-                  <div style={{ fontFamily:'Fraunces,serif', fontSize:36, color:T.green, marginBottom:6, fontStyle:'italic' }}>~</div>
-                  <div style={{ fontSize:12, color:T.inkDim }}>Platziere Pflanzen, um Hinweise zu erhalten.</div>
-                </div>
-              )}
-              {bed.issues.map((iss,i) => {
-                const reason = companionReason(iss.a.id, iss.b.id);
-                return (
-                  <div key={i} style={{ padding:14, marginBottom:10, borderRadius:14, background:'rgba(201,84,58,0.08)', border:`1px solid rgba(201,84,58,0.22)` }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                      <div style={{ width:8, height:8, borderRadius:4, background:T.bad }} />
-                      <div style={{ ...LABEL, color:T.bad }}>Konflikt</div>
-                    </div>
-                    <div style={{ fontFamily:'Fraunces,serif', fontSize:16, fontWeight:500 }}>{iss.a.de} <em style={{ color:T.bad }}>vs.</em> {iss.b.de}</div>
-                    {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:6, lineHeight:1.5 }}>{reason}</div>}
-                  </div>
-                );
-              })}
-              {bed.wins.slice(0,6).map((w,i) => {
-                const reason = companionReason(w.a.id, w.b.id);
-                return (
-                  <div key={`w${i}`} style={{ padding:14, marginBottom:10, borderRadius:14, background:'rgba(107,142,78,0.08)', border:`1px solid rgba(107,142,78,0.22)` }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                      <div style={{ width:8, height:8, borderRadius:4, background:T.good }} />
-                      <div style={{ ...LABEL, color:T.good }}>Gute Nachbarn</div>
-                    </div>
-                    <div style={{ fontFamily:'Fraunces,serif', fontSize:16, fontWeight:500 }}>{w.a.de} <em style={{ color:T.good }}>+</em> {w.b.de}</div>
-                    {reason && <div style={{ fontSize:11, color:T.inkDim, marginTop:6, lineHeight:1.5 }}>{reason}</div>}
-                  </div>
-                );
-              })}
-              {rotation.warnings.length > 0 && (
-                <div style={{ marginTop: bed.issues.length || bed.wins.length ? 14 : 0 }}>
-                  <div style={{ ...LABEL, marginBottom:8 }}>Fruchtfolge · Rotation</div>
-                  {rotation.warnings.map((w,i) => (
-                    <div key={i} style={{ padding:14, marginBottom:10, borderRadius:14, background:'rgba(217,164,65,0.08)', border:`1px solid rgba(217,164,65,0.3)` }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                        <div style={{ width:8, height:8, borderRadius:4, background:T.ochre }} />
-                        <div style={{ ...LABEL, color:T.ochre }}>Fruchtfolge-Hinweis</div>
-                      </div>
-                      <div style={{ fontFamily:'Fraunces,serif', fontSize:15, fontWeight:500, marginBottom:4 }}>{w.familyDe}</div>
-                      <div style={{ fontSize:11, color:T.inkDim }}>In mehreren Saisons: {w.seasons.join(', ')}.</div>
-                      {w.tip && <div style={{ fontSize:11, color:T.inkDim, marginTop:5, lineHeight:1.5 }}>{w.tip}</div>}
-                    </div>
-                  ))}
-                  {rotation.score >= 75 && rotation.warnings.length === 0 && (
-                    <div style={{ padding:12, borderRadius:12, background:'rgba(107,142,78,0.08)', border:`1px solid rgba(107,142,78,0.22)`, fontSize:12, color:T.good }}>
-                      ✓ Gute Fruchtfolge — Pflanzenfamilien gut verteilt.
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {activeTab==='plants' && (
-          <div>
-            <div style={LABEL}>Tipp · Tip</div>
-            <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:18, marginBottom:18, boxShadow:'0 1px 0 rgba(31,42,27,0.04)' }}>
-              <div style={{ fontFamily:'Fraunces,serif', fontSize:20, lineHeight:1.3, fontStyle:'italic', color:T.green }}>"Tomate liebt Basilikum — und hasst Kartoffel."</div>
-              <div style={{ fontSize:11, color:T.inkMute, marginTop:8, ...MONO }}>— Mischkultur 101</div>
-            </div>
-            <div style={{ fontSize:13, color:T.inkDim, lineHeight:1.6, marginBottom:18 }}>
-              Mischkultur erhöht den Ertrag um bis zu <strong style={{ color:T.ink }}>30%</strong> und reduziert Schädlingsbefall natürlich.
-            </div>
-            <div style={LABEL}>Notizen · Notes</div>
-            <textarea value={notes} onChange={e=>handleNotesChange(e.target.value)} placeholder="Beobachtungen, Ideen, Erinnerungen…" style={{ width:'100%', minHeight:100, padding:12, background:T.panel, border:`1px solid ${T.border}`, borderRadius:12, color:T.ink, fontFamily:'inherit', fontSize:12, resize:'vertical', outline:'none' }} />
-          </div>
-        )}
-
-        {activeTab==='care' && (
-          <div>
-            <div style={LABEL}>Diese Woche · This week</div>
-            {[
-              { day:'MO', task:'Tomaten ausgeizen', count:3 },
-              { day:'MI', task:'Bewässern', count:null },
-              { day:'FR', task:'Salat ernten', count:2 },
-              { day:'SO', task:'Mulchen', count:null },
-            ].map((t,i) => (
-              <div key={i} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 0', borderBottom:`1px solid ${T.border}` }}>
-                <div style={{ ...MONO, fontSize:10, color:T.green, width:24, fontWeight:600 }}>{t.day}</div>
-                <div style={{ flex:1, fontSize:13 }}>{t.task}</div>
-                {t.count && <Chip style={{ fontSize:10 }}>{t.count}×</Chip>}
-              </div>
-            ))}
-            {Object.values(bed.cells).length > 0 && (
-              <div style={{ marginTop:20 }}>
-                <div style={{ ...LABEL, marginBottom:12 }}>Pflegeanleitung</div>
-                {[...new Set(Object.values(bed.cells).map(v => typeof v === 'object' ? v.plantId : v).filter(Boolean))].map(pid => {
-                  const p = plantById(pid);
-                  return p ? (
-                    <div key={pid} style={{ marginBottom:12, padding:12, background:T.panel, border:`1px solid ${T.border}`, borderRadius:12 }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                        <PlantTile plant={p} size={24} showLabel={false} draggable={false} />
-                        <div style={{ fontWeight:600, fontSize:13 }}>{p.de}</div>
-                        <div style={{ ...MONO, fontSize:9, color:T.inkMute }}>{p.water==='high'?'💧💧💧':p.water==='med'?'💧💧':'💧'}</div>
-                      </div>
-                      <div style={{ fontSize:11, color:T.inkDim, lineHeight:1.5 }}>{p.careNotes}</div>
-                    </div>
-                  ) : null;
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab==='harvest' && (() => {
-          const bedHarvests = entriesForBed(bedId);
-          const placedPlantIds = [...new Set(Object.values(bed.cells).map(v => typeof v === 'object' ? v.plantId : v).filter(Boolean))];
-          const totalLogged = bedHarvests.reduce((s, e) => s + e.amountKg, 0);
-          const planned = Object.values(bed.cells)
-            .filter(v => typeof v === 'object')
-            .reduce((s, { plantId, count = 1 }) => s + (plantById(plantId)?.yield || 0) * count, 0);
-          return (
-            <div>
-              <div style={LABEL}>Ernte erfassen</div>
-              <div style={{ padding:14, background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, marginBottom:16 }}>
-                <div style={{ display:'flex', gap:8, marginBottom:10 }}>
-                  <select value={harvestPlant} onChange={e=>setHarvestPlant(e.target.value)}
-                    style={{ flex:1, padding:'8px 10px', borderRadius:10, border:`1px solid ${T.border}`, background:T.bg, color:T.ink, fontFamily:'inherit', fontSize:12 }}>
-                    <option value="">Pflanze wählen…</option>
-                    {placedPlantIds.map(pid => {
-                      const p = plantById(pid);
-                      return p ? <option key={pid} value={pid}>{p.de}</option> : null;
-                    })}
-                  </select>
-                </div>
-                <div style={{ display:'flex', gap:8 }}>
-                  <input type="number" min="0" step="0.1" placeholder="kg" value={harvestAmount} onChange={e=>setHarvestAmount(e.target.value)}
-                    style={{ flex:1, padding:'8px 10px', borderRadius:10, border:`1px solid ${T.border}`, background:T.bg, color:T.ink, fontFamily:'JetBrains Mono,monospace', fontSize:12 }} />
-                  <button
-                    disabled={!harvestPlant || !harvestAmount}
-                    onClick={() => {
-                      addHarvest({ bedId, plantId:harvestPlant, season:bed.season, amountKg:harvestAmount });
-                      setHarvestAmount('');
-                    }}
-                    style={{ padding:'8px 16px', borderRadius:10, background:harvestPlant&&harvestAmount?T.green:'rgba(31,42,27,0.12)', color:harvestPlant&&harvestAmount?'#fff':T.inkMute, border:'none', cursor:harvestPlant&&harvestAmount?'pointer':'default', fontWeight:600, fontSize:12, fontFamily:'inherit', transition:'all 0.15s' }}>
-                    Eintragen
-                  </button>
-                </div>
-              </div>
-
-              {(planned > 0 || totalLogged > 0) && (
-                <div style={{ display:'flex', gap:8, marginBottom:16 }}>
-                  <div style={{ flex:1, padding:12, background:T.panel, border:`1px solid ${T.border}`, borderRadius:12, textAlign:'center' }}>
-                    <div style={{ ...MONO, fontSize:9, color:T.inkMute, textTransform:'uppercase', letterSpacing:'0.08em' }}>Geplant</div>
-                    <div style={{ fontFamily:'Fraunces,serif', fontSize:20, fontWeight:500, color:T.inkDim, marginTop:2 }}>~{planned.toFixed(1)} kg</div>
-                  </div>
-                  <div style={{ flex:1, padding:12, background:T.panel, border:`1px solid ${T.border}`, borderRadius:12, textAlign:'center' }}>
-                    <div style={{ ...MONO, fontSize:9, color:T.inkMute, textTransform:'uppercase', letterSpacing:'0.08em' }}>Geerntet</div>
-                    <div style={{ fontFamily:'Fraunces,serif', fontSize:20, fontWeight:500, color:T.green, marginTop:2 }}>{totalLogged.toFixed(1)} kg</div>
-                  </div>
-                </div>
-              )}
-
-              {bedHarvests.length === 0 ? (
-                <div style={{ fontSize:12, color:T.inkMute, textAlign:'center', padding:'20px 0' }}>Noch keine Ernten eingetragen.</div>
-              ) : (
-                <div>
-                  <div style={LABEL}>Verlauf</div>
-                  {[...bedHarvests].reverse().map(e => {
-                    const p = plantById(e.plantId);
-                    return (
-                      <div key={e.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 0', borderBottom:`1px solid ${T.border}` }}>
-                        {p && <PlantTile plant={p} size={22} showLabel={false} draggable={false} />}
-                        <div style={{ flex:1 }}>
-                          <div style={{ fontSize:12, fontWeight:600 }}>{p?.de || e.plantId}</div>
-                          <div style={{ ...MONO, fontSize:10, color:T.inkMute }}>{e.date}</div>
-                        </div>
-                        <div style={{ ...MONO, fontSize:12, color:T.green, fontWeight:600 }}>{e.amountKg.toFixed(1)} kg</div>
-                        <button onClick={() => deleteHarvest(e.id)} style={{ background:'none', border:'none', color:T.inkMute, cursor:'pointer', fontSize:14, lineHeight:1, padding:'2px 4px' }}>×</button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+      <aside className="no-print" style={{ borderLeft:`1px solid ${T.border}`, background:T.paper, padding:20, height:'100vh', overflow:'auto', position:'sticky', top:0 }}>
+        <DesktopTabs
+          bed={bed}
+          panels={{ analysis:analysisPanel, care:carePanel, harvest:harvestPanel, notes:notesPanel }}
+        />
       </aside>
+      {sheets}
     </div>
-    {touchGhost && (() => {
-      const p = plantById(touchGhost.plantId);
-      if (!p) return null;
-      const size = 60;
-      return (
-        <div style={{ position:'fixed', left:touchGhost.x - size/2, top:touchGhost.y - size - 18, width:size, height:size, borderRadius:'50%', background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`, zIndex:1000, pointerEvents:'none', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 16px rgba(0,0,0,0.3)' }}>
-          <span style={{ fontFamily:'Fraunces,serif', fontSize:24, color:'rgba(255,255,255,0.95)', fontStyle:'italic' }}>{p.glyph[0]}</span>
-        </div>
-      );
-    })()}
+  );
+}
+
+function DesktopTabs({ bed, panels }) {
+  const [tab, setTab] = useState('analysis');
+  const TABS = [
+    { id:'analysis', label:`Analyse${bed.issues.length ? ` (${bed.issues.length})` : ''}` },
+    { id:'care', label:'Pflege' },
+    { id:'harvest', label:'Ernte' },
+    { id:'notes', label:'Notizen' },
+  ];
+  return (
+    <>
+      <div style={{ display:'flex', gap:3, marginBottom:16, padding:4, background:T.bg, borderRadius:12, border:`1px solid ${T.border}` }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} aria-pressed={tab === t.id}
+            style={{
+              flex:1, minHeight:38, border:'none', borderRadius:9, cursor:'pointer',
+              fontSize:11.5, fontWeight:600, fontFamily:'inherit',
+              background:tab === t.id ? T.panel : 'transparent',
+              boxShadow:tab === t.id ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              color:tab === t.id ? T.ink : T.inkMute,
+            }}>{t.label}</button>
+        ))}
+      </div>
+      {panels[tab]}
     </>
+  );
+}
+
+function PlantDetail({ plant: p }) {
+  if (!p) return null;
+  const rows = [
+    ['Abstand', `${p.spacing_cm} cm`],
+    ['Wurzeltiefe', `${p.rootDepth_cm} cm`],
+    ['Wuchshöhe', `${p.height_cm} cm`],
+    ['Saattiefe', p.sowDepth > 0 ? `${p.sowDepth} cm` : 'auf die Erde'],
+    ['Standort', SUN_DE[p.sun]],
+    ['Wasser', WATER_DE[p.water]],
+    ['Aufwand', DIFFICULTY_DE[p.difficulty]],
+    ['Nährstoffe', FEEDERS[p.feeder]?.de],
+    ['Familie', p.family],
+    ['Vorziehen', p.precultureMonths.length ? monthRangeLabel(p.precultureMonths) : '—'],
+    ['Aussaat/Pflanzung', monthRangeLabel(p.sowMonths)],
+    ['Ernte', p.harvestMonths.length ? monthRangeLabel(p.harvestMonths) : '—'],
+    ['Reifezeit', p.harvestWeeks > 0 ? `${p.harvestWeeks} Wochen` : '—'],
+    ['Ertrag', p.yield > 0 ? `~${p.yield} kg je Pflanze` : '—'],
+  ];
+  return (
+    <div>
+      <p style={{ fontSize:13.5, color:T.inkDim, lineHeight:1.6, marginBottom:14 }}>{p.description}</p>
+      <div style={{ ...card, marginBottom:14 }}>
+        <div style={{ ...LABEL, marginBottom:6 }}>Pflege</div>
+        <div style={{ fontSize:12.5, color:T.inkDim, lineHeight:1.6 }}>{p.careNotes}</div>
+      </div>
+      <div style={{ ...card, padding:0, overflow:'hidden' }}>
+        {rows.map(([k, v], i) => (
+          <div key={k} style={{ display:'flex', justifyContent:'space-between', gap:12, padding:'10px 14px', borderTop:i ? `1px solid ${T.border}` : 'none' }}>
+            <span style={{ fontSize:12, color:T.inkMute }}>{k}</span>
+            <span style={{ ...MONO, fontSize:12, fontWeight:600, textAlign:'right' }}>{v}</span>
+          </div>
+        ))}
+      </div>
+      {FEEDERS[p.feeder]?.tip && (
+        <div style={{ marginTop:12, padding:12, borderRadius:12, background:T.goodBg, border:`1px solid ${T.goodBorder}`, fontSize:12, color:T.inkDim, lineHeight:1.55 }}>
+          {FEEDERS[p.feeder].tip}
+        </div>
+      )}
+    </div>
   );
 }

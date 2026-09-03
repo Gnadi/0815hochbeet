@@ -2,14 +2,31 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hochbeetplaner</title>
+    <!-- viewport-fit=cover lets the layout use the full screen; the safe-area
+         insets in index.css keep content clear of the notch and home bar. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Hochbeetplaner — Hochbeet planen, Mischkultur & Pflegeplan</title>
+    <meta name="description" content="Plane dein Hochbeet maßstabsgetreu, finde gute Nachbarn für die Mischkultur und bekomme automatisch Gieß-, Aussaat- und Erntetermine. Funktioniert offline auf dem Handy." />
+    <meta name="theme-color" content="#F5EFE0" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/favicon-64.png" type="image/png" sizes="64x64" />
+    <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Hochbeet" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta property="og:title" content="Hochbeetplaner" />
+    <meta property="og:description" content="Hochbeet planen, Mischkultur prüfen, Pflegeaufgaben automatisch bekommen." />
+    <meta property="og:type" content="website" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>
+    <noscript>Der Hochbeetplaner braucht JavaScript.</noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

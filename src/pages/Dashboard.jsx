@@ -1,186 +1,60 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useBreakpoint } from '../hooks/useBreakpoint';
+import { useBeds } from '../hooks/useBeds';
+import { useTodos } from '../hooks/useTodos';
 import { useWeather } from '../hooks/useWeather';
-import { T } from '../theme';
-import { plantById, SHAPES } from '../data/plants';
+import { currentSeason, pushAllToRemote } from '../lib/beds';
+import { applyTheme, getStoredTheme, LABEL, MONO, T } from '../theme';
+import { monthRangeLabel, MONTHS_DE } from '../data/plantDetails';
 import { getWeatherAdvice } from '../utils/weatherAdvice';
-import { getRotationAnalysis } from '../utils/rotationAdvice';
+import { TASK_KINDS, sowableNow, toDateStr } from '../utils/taskEngine';
 import { TabBar } from '../components/TabBar';
 import { AuthModal } from '../components/AuthModal';
-import { Btn, TrashIcon } from '../components/Btn';
-import { useTodos } from '../hooks/useTodos';
+import { Sheet } from '../components/Sheet';
+import { Btn, IconBtn } from '../components/Btn';
+import { BedCard } from '../components/BedCard';
+import { useToast } from '../components/Toast';
+import { LogoLockup, LogoMark } from '../components/Logo';
+import { canInstall, promptInstall } from '../pwa';
 
-const MONTH_NAMES = ['JAN','FEB','MÄR','APR','MAI','JUN','JUL','AUG','SEP','OKT','NOV','DEZ'];
-const DE_DAYS = ['SO','MO','DI','MI','DO','FR','SA'];
-
-function toDateStr(d) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-
-function getThisWeekRange() {
-  const today = new Date();
-  const dow = today.getDay();
-  const diff = dow === 0 ? -6 : 1 - dow;
-  const monday = new Date(today);
-  monday.setDate(today.getDate() + diff);
-  monday.setHours(0, 0, 0, 0);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
-  return { monday, sunday };
-}
-
-const TIMELINE = [
-  { plant:'carrot',  start:2, end:9  },
-  { plant:'tomato',  start:4, end:9  },
-  { plant:'lettuce', start:2, end:5  },
-  { plant:'basil',   start:4, end:8  },
-  { plant:'spinach', start:8, end:11 },
-];
+const DE_DAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const card = { background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:16, boxShadow:'var(--shadow)' };
 
 function greeting() {
   const h = new Date().getHours();
-  return h < 12 ? 'Guten Morgen' : h < 17 ? 'Guten Tag' : 'Guten Abend';
+  return h < 11 ? 'Guten Morgen' : h < 18 ? 'Guten Tag' : 'Guten Abend';
 }
 
-function loadLocalBeds() {
-  const ids = JSON.parse(localStorage.getItem('hb_beds') || '[]');
-  return ids.map(id => {
-    try { return JSON.parse(localStorage.getItem(`hb_bed_${id}`) || 'null'); } catch { return null; }
-  }).filter(Boolean);
-}
-
-function isNewCellFormat(cells) {
-  const vals = Object.values(cells);
-  return vals.length > 0 && typeof vals[0] === 'object';
-}
-
-function buildMiniGrid(cells, bedW, bedH) {
-  const W = 8, H = 4, grid = {};
-  Object.values(cells).forEach(({plantId, x, y}) => {
-    const mx = Math.min(W-1, Math.floor((x / (bedW||120)) * W));
-    const my = Math.min(H-1, Math.floor((y / (bedH||80))  * H));
-    grid[`${mx},${my}`] = plantId;
-  });
-  return grid;
-}
-
-function MiniGrid({ bed }) {
-  const cells = resolveCells(bed);
-
-  if (isNewCellFormat(cells)) {
-    const grid = buildMiniGrid(cells, bed.width, bed.depth);
-    const W = 8, H = 4;
-    return (
-      <div style={{ display:'grid', gridTemplateColumns:`repeat(${W},1fr)`, gap:2, padding:8, background:T.bg, borderRadius:10 }}>
-        {Array.from({length:H}).map((_,y) => Array.from({length:W}).map((_,x) => {
-          const pid = grid[`${x},${y}`];
-          const p = pid ? plantById(pid) : null;
-          return <div key={`${x},${y}`} style={{ aspectRatio:'1', background:p?`oklch(0.62 0.1 ${p.hue})`:'rgba(31,42,27,0.06)', borderRadius:3 }} />;
-        }))}
-      </div>
-    );
-  }
-
-  const shape = SHAPES[bed.shapeId] || SHAPES.rect;
-  const maskFn = shape.id === 'freeform'
-    ? (x, y) => !!( bed.customMask || {} )[`${x},${y}`]
-    : shape.mask;
-  const gridCells = [];
-  for (let y = 0; y < shape.h; y++)
-    for (let x = 0; x < shape.w; x++)
-      gridCells.push({ x, y, valid: maskFn(x, y), pid: cells[`${x},${y}`] || null });
-  return (
-    <div style={{ display:'grid', gridTemplateColumns:`repeat(${shape.w},1fr)`, gap:2, padding:8, background:T.bg, borderRadius:10 }}>
-      {gridCells.map(({ x, y, valid, pid }) => {
-        const p = pid ? plantById(pid) : null;
-        return <div key={`${x},${y}`} style={{ aspectRatio:'1', background:!valid?'transparent':p?`oklch(0.62 0.1 ${p.hue})`:'rgba(31,42,27,0.06)', borderRadius:3 }} />;
-      })}
-    </div>
-  );
-}
-
-function resolveCells(bed) {
-  if (bed.seasonCells) {
-    const sc = bed.seasonCells;
-    return sc.summer || sc.spring || sc.autumn || sc.winter || sc[Object.keys(sc)[0]] || {};
-  }
-  return bed.cells || {};
-}
-
-function calcFillPct(bed) {
-  const cells = resolveCells(bed);
-  if (isNewCellFormat(cells)) {
-    return Math.min(100, Object.keys(cells).length * 4);
-  }
-  const filled = Object.keys(cells).length;
-  const shape = SHAPES[bed.shapeId] || SHAPES.rect;
-  let totalCells = 0;
-  if (shape.id === 'freeform') {
-    totalCells = Object.keys(bed.customMask || {}).length;
-  } else {
-    for (let y = 0; y < shape.h; y++)
-      for (let x = 0; x < shape.w; x++)
-        if (shape.mask(x, y)) totalCells++;
-  }
-  return totalCells ? Math.round(filled / totalCells * 100) : 0;
-}
-
-function RotationBadge({ bed }) {
-  const { score, warnings } = getRotationAnalysis(bed.seasonCells || {});
-  if (!bed.seasonCells || !Object.values(bed.seasonCells).some(sc => Object.keys(sc || {}).length > 0)) return null;
-  const color = score >= 75 ? T.good : score >= 50 ? T.ochre : T.bad;
-  const label = score >= 75 ? '✓ Fruchtfolge ok' : score >= 50 ? '↻ Fruchtfolge prüfen' : '⚠ Fruchtfolge';
-  return (
-    <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:9, color, fontWeight:600, marginTop:8 }}>
-      {label}{warnings.length > 0 ? ` · ${warnings.length} Hinweis${warnings.length > 1 ? 'e' : ''}` : ''}
-    </div>
-  );
-}
-
-function BedCard({ bed, onClick, desktop, onDelete }) {
-  const cells = resolveCells(bed);
-  const filled = Object.keys(cells).length;
-  const pIds = [...new Set(Object.values(cells).map(v => typeof v === 'object' ? v.plantId : v).filter(Boolean))].slice(0,5);
-  const pct = calcFillPct(bed);
-  const [confirm, setConfirm] = useState(false);
-
-  function handleDelete(e) {
-    e.stopPropagation();
-    if (confirm) { onDelete(bed.id); } else { setConfirm(true); }
-  }
+function TaskRow({ task, onToggle, bedName }) {
+  const kind = TASK_KINDS[task.kind] || TASK_KINDS.care;
+  const d = new Date(task.date + 'T00:00:00');
+  const isToday = toDateStr(new Date()) === task.date;
+  const overdue = task.date < toDateStr(new Date()) && !task.done;
 
   return (
-    <div onClick={onClick} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:20, cursor:'pointer', transition:'transform 0.15s', boxShadow:'0 1px 0 rgba(31,42,27,0.04),0 8px 24px -16px rgba(31,42,27,0.18)', position:'relative' }}
-      onMouseEnter={e=>e.currentTarget.style.transform='translateY(-2px)'}
-      onMouseLeave={e=>{ e.currentTarget.style.transform=''; setConfirm(false); }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14 }}>
-        <div>
-          <h3 style={{ fontFamily:'Fraunces,serif', fontSize:desktop?20:18, margin:0, fontWeight:500 }}>{bed.name}</h3>
-          <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.inkMute, marginTop:2 }}>
-            {bed.shapeId||'Rechteck'} · {bed.width||120}×{bed.depth||80} cm
-          </div>
+    <div style={{ ...card, padding:'12px 14px', display:'flex', gap:12, alignItems:'flex-start', opacity:task.done ? 0.5 : 1 }}>
+      <button onClick={() => onToggle(task.id)}
+        aria-label={task.done ? `${task.title} als offen markieren` : `${task.title} als erledigt markieren`}
+        style={{
+          width:26, height:26, minWidth:26, borderRadius:8, marginTop:1, flexShrink:0,
+          border:`1.5px solid ${task.done ? T.green : T.borderHi}`,
+          background:task.done ? T.green : 'transparent', cursor:'pointer',
+          display:'flex', alignItems:'center', justifyContent:'center',
+        }}>
+        {task.done && <span style={{ color:'var(--panel)', fontSize:13, fontWeight:700, lineHeight:1 }}>✓</span>}
+      </button>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:13.5, fontWeight:600, textDecoration:task.done ? 'line-through' : 'none', lineHeight:1.35 }}>
+          <span aria-hidden="true" style={{ marginRight:7 }}>{kind.icon}</span>{task.title}
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-          <button onClick={handleDelete} title="Beet löschen"
-            style={{ padding:confirm?'4px 10px':'4px 8px', borderRadius:8, border:`1px solid ${confirm?'rgba(201,84,58,0.5)':T.border}`, background:confirm?'rgba(201,84,58,0.08)':'transparent', color:confirm?T.bad:T.inkMute, fontFamily:'JetBrains Mono,monospace', fontSize:confirm?11:13, cursor:'pointer', transition:'all 0.15s', lineHeight:1, flexShrink:0 }}>
-            {confirm ? 'Löschen?' : <TrashIcon size={14} />}
-          </button>
-          <div style={{ width:38, height:38, borderRadius:19, background:T.green, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'JetBrains Mono,monospace', fontSize:11, fontWeight:600, flexShrink:0 }}>{pct}%</div>
+        <div style={{ ...MONO, fontSize:9.5, color:overdue ? T.bad : isToday ? T.terra : T.inkMute, marginTop:3, fontWeight:600 }}>
+          {isToday ? 'HEUTE' : DE_DAYS[d.getDay()].toUpperCase()} {d.getDate()}.{d.getMonth() + 1}.
+          {bedName ? ` · ${bedName}` : ''}
         </div>
+        {task.detail && <div style={{ fontSize:11.5, color:T.inkDim, marginTop:5, lineHeight:1.5 }}>{task.detail}</div>}
       </div>
-      <MiniGrid bed={bed} />
-      <div style={{ display:'flex', marginTop:12 }}>
-        {pIds.slice(0,5).map((pid,k) => {
-          const p = plantById(pid);
-          return p ? <div key={k} style={{ width:24, height:24, borderRadius:12, background:`oklch(0.62 0.1 ${p.hue})`, border:`2px solid ${T.panel}`, marginLeft:k>0?-8:0, fontFamily:'Fraunces,serif', fontStyle:'italic', color:'#fff', fontSize:12, display:'flex', alignItems:'center', justifyContent:'center' }}>{p.glyph[0]}</div> : null;
-        })}
-      </div>
-      <RotationBadge bed={bed} />
     </div>
   );
 }
@@ -189,253 +63,242 @@ export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const mobile = useBreakpoint();
+  const beds = useBeds();
   const weather = useWeather();
-  const [beds, setBeds] = useState([]);
-  const [showAuth, setShowAuth] = useState(false);
-  const currentMonth = new Date().getMonth();
+  const toast = useToast();
   const { todos, toggleTodo } = useTodos();
+  const [showAuth, setShowAuth] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState(getStoredTheme);
+  const [installable, setInstallable] = useState(canInstall);
 
-  const weekTodos = useMemo(() => {
-    const { monday, sunday } = getThisWeekRange();
+  useEffect(() => {
+    const onInstallable = () => setInstallable(true);
+    window.addEventListener('hb:installable', onInstallable);
+    return () => window.removeEventListener('hb:installable', onInstallable);
+  }, []);
+
+  const season = currentSeason();
+  const month = new Date().getMonth();
+  const todayStr = toDateStr(new Date());
+
+  const upcoming = useMemo(() => {
+    const in7 = toDateStr(new Date(Date.now() + 7 * 86400000));
     return todos
-      .filter(t => {
-        const d = new Date(t.date + 'T00:00:00');
-        return d >= monday && d <= sunday;
-      })
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .filter(t => t.date >= toDateStr(new Date(Date.now() - 3 * 86400000)) && t.date <= in7)
+      .sort((a, b) => Number(a.done) - Number(b.done) || a.date.localeCompare(b.date));
   }, [todos]);
 
-  const allPlantedIds = useMemo(() => {
+  const openToday = upcoming.filter(t => t.date <= todayStr && !t.done).length;
+
+  const plantedIds = useMemo(() => {
     const ids = new Set();
-    beds.forEach(bed => {
-      Object.values(bed.seasonCells || {}).forEach(sc => {
-        Object.values(sc || {}).forEach(v => {
-          if (typeof v === 'object' && v.plantId) ids.add(v.plantId);
-        });
-      });
-      Object.values(bed.cells || {}).forEach(v => {
-        if (typeof v === 'object' && v.plantId) ids.add(v.plantId);
-        else if (typeof v === 'string') ids.add(v);
-      });
-    });
+    beds.forEach(b => Object.values(b.seasonCells || {}).forEach(sc =>
+      Object.values(sc || {}).forEach(v => { if (v?.plantId) ids.add(v.plantId); })));
     return [...ids];
   }, [beds]);
 
-  const weatherAdvice = useMemo(
-    () => getWeatherAdvice(weather.forecast, allPlantedIds),
-    [weather.forecast, allPlantedIds]
-  );
+  const advice = useMemo(() => getWeatherAdvice(weather.forecast, plantedIds), [weather.forecast, plantedIds]);
+  const sowable = useMemo(() => sowableNow(month).slice(0, 8), [month]);
 
-  const dateStr = new Intl.DateTimeFormat('de-DE', { weekday:'short', day:'2-digit', month:'long' }).format(new Date());
+  const dateStr = new Intl.DateTimeFormat('de-DE', { weekday:'long', day:'2-digit', month:'long' }).format(new Date());
+  const weatherStr = weather.error || weather.loading ? '' : `${weather.temp}° ${weather.description}`;
 
-  useEffect(() => {
-    const local = loadLocalBeds();
-    setBeds(local);
-    if (user && db) {
-      getDocs(collection(db,'users',user.uid,'beds')).then(snap => {
-        const remote = snap.docs.map(d=>({id:d.id,...d.data()}));
-        const merged = [...local];
-        remote.forEach(r => { if (!merged.find(b=>b.id===r.id)) merged.push(r); });
-        setBeds(merged);
-      }).catch(()=>{});
-    }
-  }, [user]);
-
-  function deleteBed(bedId) {
-    localStorage.removeItem(`hb_bed_${bedId}`);
-    const ids = JSON.parse(localStorage.getItem('hb_beds') || '[]');
-    localStorage.setItem('hb_beds', JSON.stringify(ids.filter(id => id !== bedId)));
-    if (user && db) deleteDoc(doc(db, 'users', user.uid, 'beds', bedId)).catch(() => {});
-    setBeds(b => b.filter(x => x.id !== bedId));
+  function changeTheme(mode) {
+    setTheme(mode);
+    applyTheme(mode);
   }
 
-  const weatherStr = weather.error ? '' : weather.loading ? '…' : `${weather.temp}° ${weather.description}`;
-
-  if (mobile) return (
-    <div style={{ height:'100%', background:T.bg, paddingTop:56, paddingBottom:100, overflow:'auto', position:'relative' }}>
-      <div style={{ padding:'8px 20px 16px' }}>
-        <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute, marginBottom:4 }}>{dateStr}{weatherStr?` · ${weatherStr}`:''}</div>
-        <h1 style={{ fontFamily:'Fraunces,serif', fontSize:30, margin:0, fontWeight:500, lineHeight:1.1 }}>{greeting()},<br/><em style={{ color:T.green, fontStyle:'italic' }}>{user?.displayName || 'Gärtner'}</em>.</h1>
-      </div>
-
-      {beds[0] && (
-        <div style={{ padding:'0 16px 16px' }}>
-          <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:18, boxShadow:'0 1px 0 rgba(31,42,27,0.04),0 8px 24px -16px rgba(31,42,27,0.18)' }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14 }}>
-              <div>
-                <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Aktiv · Active</div>
-                <h3 style={{ fontFamily:'Fraunces,serif', fontSize:22, margin:'4px 0 0', fontWeight:500 }}>{beds[0].name}</h3>
-                <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.inkMute, marginTop:2 }}>{beds[0].width||120} × {beds[0].depth||80} cm</div>
-              </div>
-              <div style={{ width:44, height:44, borderRadius:22, background:T.green, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'JetBrains Mono,monospace', fontSize:12, fontWeight:600 }}>{calcFillPct(beds[0])}%</div>
-            </div>
-            <MiniGrid bed={beds[0]} />
-            <button onClick={()=>navigate(`/bed/${beds[0].id}`)} style={{ width:'100%', marginTop:12, padding:'10px 16px', borderRadius:999, background:T.green, color:'#fff', border:'none', cursor:'pointer', fontSize:13, fontWeight:600, fontFamily:'inherit' }}>Beet öffnen →</button>
-          </div>
+  // ── Sections ─────────────────────────────────────────────────────────────
+  const header = (
+    <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12 }}>
+      <div style={{ minWidth:0 }}>
+        {!mobile && <div style={{ marginBottom:12 }}><LogoLockup size={38} onClick={() => navigate('/dashboard')} /></div>}
+        <div style={{ ...LABEL, display:'flex', alignItems:'center', gap:8 }}>
+          {mobile && <LogoMark size={26} />}
+          <span style={{ minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{dateStr}{weatherStr ? ` · ${weatherStr}` : ''}</span>
         </div>
-      )}
-
-      <div style={{ padding:'0 16px 12px' }}>
-        <Btn onClick={() => navigate('/autoplan')} variant="primary" style={{ width:'100%', justifyContent:'center' }}>
-          ✦ Plan generieren
-        </Btn>
+        <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:mobile ? 28 : 44, margin:'6px 0 0', fontWeight:500, lineHeight:1.08 }}>
+          {greeting()},{mobile ? <br /> : ' '}
+          <em style={{ color:T.green, fontStyle:'italic' }}>{user?.displayName || 'Gärtner'}</em>.
+        </h1>
       </div>
-
-      {weatherAdvice.length > 0 && (
-        <div style={{ padding:'0 16px 12px', display:'flex', flexDirection:'column', gap:8 }}>
-          {weatherAdvice.map((a, i) => (
-            <div key={i} style={{ background:a.bg, border:`1px solid ${a.border}`, borderRadius:14, padding:'12px 14px', display:'flex', alignItems:'flex-start', gap:12 }}>
-              <div style={{ fontSize:18, lineHeight:1, flexShrink:0, marginTop:1 }}>{a.icon}</div>
-              <div>
-                <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:700, color:a.color, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:3 }}>{a.title}</div>
-                <div style={{ fontSize:12, color:'rgba(31,42,27,0.75)', lineHeight:1.5 }}>{a.text}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{ padding:'0 20px 8px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-        <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Diese Woche</div>
-        <button onClick={()=>navigate('/calendar')} style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:600, padding:0 }}>Kalender →</button>
+      <div style={{ display:'flex', gap:8, flexShrink:0 }}>
+        {!mobile && <Btn onClick={() => navigate('/onboarding')}>+ Neues Beet</Btn>}
+        {!mobile && <Btn variant="primary" onClick={() => navigate('/autoplan')}>✦ Plan generieren</Btn>}
+        <IconBtn size={mobile ? 40 : 44} label="Einstellungen" onClick={() => setSettingsOpen(true)}>⚙</IconBtn>
       </div>
-      <div style={{ padding:'0 16px 16px', display:'flex', flexDirection:'column', gap:8 }}>
-        {weekTodos.length === 0 ? (
-          <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:'12px 14px', display:'flex', alignItems:'center', gap:12 }}>
-            <div style={{ fontSize:13, color:T.inkMute }}>Keine Aufgaben diese Woche.</div>
-          </div>
-        ) : weekTodos.map(t => {
-          const d = new Date(t.date + 'T00:00:00');
-          const dayLabel = DE_DAYS[d.getDay()];
-          return (
-            <div key={t.id} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:'12px 14px', display:'flex', alignItems:'center', gap:12, opacity:t.done?0.5:1 }}>
-              <button onClick={()=>toggleTodo(t.id)} style={{ width:16, height:16, borderRadius:3, border:`1.5px solid ${t.done?T.green:T.borderHi}`, background:t.done?T.green:'transparent', flexShrink:0, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', padding:0 }}>
-                {t.done && <span style={{ color:'#fff', fontSize:9, fontWeight:700, lineHeight:1 }}>✓</span>}
-              </button>
-              <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:9, color:T.terra, fontWeight:600, width:22, flexShrink:0 }}>{dayLabel}</div>
-              <div style={{ flex:1, fontSize:13, fontWeight:500, textDecoration:t.done?'line-through':'none' }}>{t.title}</div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div style={{ padding:'8px 20px' }}><div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Beete · {beds.length}</div></div>
-      <div style={{ padding:'0 16px 8px', display:'flex', gap:10, overflowX:'auto' }}>
-        {beds.map((bed,i) => (
-          <div key={i} onClick={()=>navigate(`/bed/${bed.id}`)} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:14, minWidth:140, flexShrink:0, cursor:'pointer' }}>
-            <div style={{ fontFamily:'Fraunces,serif', fontSize:15, fontWeight:500, marginBottom:6 }}>{bed.name}</div>
-            <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.green, fontWeight:600 }}>{calcFillPct(bed)}% belegt</div>
-          </div>
-        ))}
-        <div onClick={()=>navigate('/onboarding')} style={{ background:'transparent', border:`1.5px dashed ${T.borderHi}`, borderRadius:14, padding:14, minWidth:120, flexShrink:0, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <div style={{ fontSize:13, color:T.inkMute, fontWeight:500 }}>+ Neu</div>
-        </div>
-      </div>
-      <TabBar active="home" />
     </div>
   );
 
-  // Desktop
-  return (
-    <>
-      <div style={{ minHeight:'100vh', background:T.bg, padding:32, overflow:'auto' }}>
-        <div style={{ maxWidth:1280, margin:'0 auto' }}>
-          <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom:28 }}>
-            <div>
-              <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>{dateStr}{weatherStr?` · ${weatherStr}`:''}</div>
-              <h1 style={{ fontFamily:'Fraunces,serif', fontSize:48, margin:'6px 0 0', fontWeight:500 }}>{greeting()}, <em style={{ color:T.green, fontStyle:'italic' }}>{user?.displayName || 'Gärtner'}</em>.</h1>
-            </div>
-            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-              {user ? (
-                <Btn onClick={logout} variant="ghost" style={{ fontSize:12 }}>Abmelden</Btn>
-              ) : (
-                <Btn onClick={()=>setShowAuth(true)} variant="ghost">Anmelden</Btn>
-              )}
-              <Btn onClick={()=>navigate('/onboarding')} variant="default">+ Neues Beet</Btn>
-              <Btn onClick={()=>navigate('/autoplan')} variant="primary">✦ Plan generieren</Btn>
+  const tasksSection = (
+    <section>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+        <div style={LABEL}>Anstehend{openToday > 0 ? ` · ${openToday} offen` : ''}</div>
+        <button onClick={() => navigate('/calendar')}
+          style={{ background:'none', border:'none', color:T.green, cursor:'pointer', ...MONO, fontSize:10.5, fontWeight:700, padding:'6px 0', minHeight:34 }}>
+          Kalender →
+        </button>
+      </div>
+      {upcoming.length === 0 ? (
+        <div style={{ ...card, fontSize:13, color:T.inkDim, lineHeight:1.55 }}>
+          Nichts zu tun. Sobald du Pflanzen ins Beet setzt, entstehen hier automatisch Gieß-, Aussaat- und Ernteaufgaben.
+        </div>
+      ) : (
+        <div style={{ display:mobile ? 'flex' : 'grid', gridTemplateColumns:mobile ? undefined : 'repeat(auto-fill,minmax(280px,1fr))', flexDirection:mobile ? 'column' : undefined, gap:8 }}>
+          {upcoming.slice(0, mobile ? 6 : 9).map(t => (
+            <TaskRow key={t.id} task={t} onToggle={toggleTodo} bedName={beds.find(b => b.id === t.bedId)?.name} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  const adviceSection = advice.length > 0 && (
+    <section style={{ display:'grid', gridTemplateColumns:mobile ? '1fr' : `repeat(${Math.min(advice.length, 3)},1fr)`, gap:10 }}>
+      {advice.map((a, i) => (
+        <div key={i} style={{ background:a.bg, border:`1px solid ${a.border}`, borderRadius:16, padding:'14px 16px', display:'flex', gap:12, alignItems:'flex-start' }}>
+          <span aria-hidden="true" style={{ fontSize:19, lineHeight:1, flexShrink:0, marginTop:1 }}>{a.icon}</span>
+          <div>
+            <div style={{ ...MONO, fontSize:9.5, fontWeight:700, color:a.color, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:4 }}>{a.title}</div>
+            <div style={{ fontSize:12.5, color:T.inkDim, lineHeight:1.5 }}>{a.text}</div>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+
+  const sowSection = (
+    <section>
+      <div style={{ ...LABEL, marginBottom:10 }}>Jetzt säen &amp; pflanzen · {MONTHS_DE[month]}</div>
+      {sowable.length === 0 ? (
+        <div style={{ ...card, fontSize:13, color:T.inkDim }}>Im {MONTHS_DE[month]} ist Pause — gute Zeit, das nächste Jahr zu planen.</div>
+      ) : (
+        <div className="hscroll" style={{ display:'flex', gap:8, paddingBottom:4 }}>
+          {sowable.map(p => (
+            <button key={p.id} onClick={() => navigate(`/plants?q=${encodeURIComponent(p.de)}`)}
+              style={{ ...card, padding:12, minWidth:126, flexShrink:0, cursor:'pointer', textAlign:'left', fontFamily:'inherit', color:T.ink, scrollSnapAlign:'start' }}>
+              <span aria-hidden="true" style={{ width:34, height:34, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`, color:'#fff', fontFamily:"'Fraunces',serif", fontStyle:'italic', fontSize:15, marginBottom:8 }}>{p.glyph[0]}</span>
+              <div style={{ fontSize:13, fontWeight:600 }}>{p.de}</div>
+              <div style={{ ...MONO, fontSize:9.5, color:T.inkMute, marginTop:3 }}>{p.harvestWeeks > 0 ? `${p.harvestWeeks} Wo. bis Ernte` : 'Schutzpflanze'}</div>
+              <div style={{ ...MONO, fontSize:9.5, color:T.green, marginTop:2 }}>Saat {monthRangeLabel(p.sowMonths)}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  const bedsSection = (
+    <section>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+        <div style={LABEL}>Meine Beete · {beds.length}</div>
+        <button onClick={() => navigate('/beds')}
+          style={{ background:'none', border:'none', color:T.green, cursor:'pointer', ...MONO, fontSize:10.5, fontWeight:700, padding:'6px 0', minHeight:34 }}>
+          Alle →
+        </button>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:mobile ? '1fr' : 'repeat(auto-fill,minmax(300px,1fr))', gap:12 }}>
+        {beds.slice(0, mobile ? 2 : 6).map(bed => (
+          <BedCard key={bed.id} bed={bed} season={season} onOpen={() => navigate(`/bed/${bed.id}`)} />
+        ))}
+        <button onClick={() => navigate('/onboarding')}
+          style={{ background:'transparent', border:`1.5px dashed ${T.borderHi}`, borderRadius:18, padding:20, cursor:'pointer', minHeight:100, color:T.inkMute, fontSize:13, fontWeight:600, fontFamily:'inherit' }}>
+          + Neues Beet anlegen
+        </button>
+      </div>
+    </section>
+  );
+
+  const settingsSheet = (
+    <Sheet open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Einstellungen">
+      <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+        <div>
+          <div style={{ ...LABEL, marginBottom:8 }}>Darstellung</div>
+          <div style={{ display:'flex', gap:6 }}>
+            {[['system', 'System'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([id, l]) => (
+              <button key={id} onClick={() => changeTheme(id)} aria-pressed={theme === id}
+                style={{ flex:1, minHeight:46, borderRadius:12, cursor:'pointer', fontWeight:600, fontFamily:'inherit', fontSize:13,
+                  background:theme === id ? T.green : T.panel, color:theme === id ? 'var(--panel)' : T.ink,
+                  border:`1px solid ${theme === id ? 'transparent' : T.border}` }}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        {installable && (
+          <div>
+            <div style={{ ...LABEL, marginBottom:8 }}>App installieren</div>
+            <div style={{ ...card }}>
+              <div style={{ fontSize:13, color:T.inkDim, lineHeight:1.55, marginBottom:12 }}>
+                Als App auf dem Homescreen: startet ohne Browserleiste und funktioniert auch ohne Empfang im Garten.
+              </div>
+              <Btn variant="primary" full onClick={async () => {
+                const ok = await promptInstall();
+                setInstallable(canInstall());
+                if (ok) toast({ message:'Hochbeet-Planer wird installiert', tone:'good' });
+              }}>Zum Homescreen hinzufügen</Btn>
             </div>
           </div>
+        )}
 
-          {/* Seasonal timeline */}
-          <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:18, padding:22, marginBottom:22, boxShadow:'0 1px 0 rgba(31,42,27,0.04),0 8px 24px -16px rgba(31,42,27,0.18)' }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18 }}>
-              <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Saisonkalender · Seasonal timeline</div>
-              <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:11, color:T.terra }}>● Heute · {MONTH_NAMES[currentMonth]}</div>
+        <div>
+          <div style={{ ...LABEL, marginBottom:8 }}>Konto</div>
+          {user ? (
+            <div style={{ ...card }}>
+              <div style={{ fontSize:13.5, fontWeight:600 }}>{user.displayName || user.email}</div>
+              <div style={{ ...MONO, fontSize:10.5, color:T.inkMute, marginTop:3 }}>Beete werden synchronisiert</div>
+              <div style={{ display:'flex', gap:8, marginTop:12, flexWrap:'wrap' }}>
+                <Btn size="sm" onClick={async () => { await pushAllToRemote(); toast({ message:'Alle Beete hochgeladen', tone:'good' }); }}>↑ Jetzt sichern</Btn>
+                <Btn size="sm" variant="quiet" onClick={() => { logout(); setSettingsOpen(false); }}>Abmelden</Btn>
+              </div>
             </div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(12,1fr)', gap:4, marginBottom:8 }}>
-              {MONTH_NAMES.map((m,i) => (
-                <div key={m}>
-                  <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:9, color:i===currentMonth?T.terra:T.inkMute, textAlign:'center', marginBottom:4, fontWeight:i===currentMonth?600:400 }}>{m}</div>
-                  <div style={{ height:3, background:i===currentMonth?T.terra:'rgba(31,42,27,0.1)', borderRadius:2 }} />
-                </div>
-              ))}
-            </div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(12,1fr)', gap:4, marginTop:14 }}>
-              {TIMELINE.map((row,i) => (
-                Array.from({length:12}).map((_,m) => {
-                  const active = m>=row.start && m<=row.end;
-                  const p = plantById(row.plant);
-                  return <div key={`${i}-${m}`} style={{ height:22, background:active?`oklch(0.62 0.1 ${p.hue})`:'transparent', borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, color:'#fff', fontWeight:600 }}>{active&&m===row.start?p.de:''}</div>;
-                })
-              ))}
-            </div>
-          </div>
-
-          {/* Weather advice cards */}
-          {weatherAdvice.length > 0 && (
-            <div style={{ display:'grid', gridTemplateColumns:`repeat(${weatherAdvice.length},1fr)`, gap:12, marginBottom:22 }}>
-              {weatherAdvice.map((a, i) => (
-                <div key={i} style={{ background:a.bg, border:`1px solid ${a.border}`, borderRadius:18, padding:'16px 18px', display:'flex', alignItems:'flex-start', gap:14, boxShadow:'0 1px 0 rgba(31,42,27,0.04)' }}>
-                  <div style={{ fontSize:22, lineHeight:1, flexShrink:0, marginTop:2 }}>{a.icon}</div>
-                  <div>
-                    <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:700, color:a.color, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:4 }}>{a.title}</div>
-                    <div style={{ fontSize:13, color:'rgba(31,42,27,0.72)', lineHeight:1.55 }}>{a.text}</div>
-                  </div>
-                </div>
-              ))}
+          ) : (
+            <div style={{ ...card }}>
+              <div style={{ fontSize:13, color:T.inkDim, lineHeight:1.55, marginBottom:12 }}>
+                Ohne Konto bleiben deine Beete nur auf diesem Gerät. Melde dich an, um sie auf Handy und Rechner zu haben.
+              </div>
+              <Btn variant="primary" full onClick={() => { setSettingsOpen(false); setShowAuth(true); }}>Anmelden / Registrieren</Btn>
             </div>
           )}
+        </div>
 
-          {/* Beds grid */}
-          <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute, marginBottom:12 }}>Meine Beete · {beds.length}</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))', gap:16, marginBottom:28 }}>
-            {beds.map(bed => <BedCard key={bed.id} bed={bed} onClick={()=>navigate(`/bed/${bed.id}`)} desktop onDelete={deleteBed} />)}
-            <div onClick={()=>navigate('/onboarding')} style={{ background:'transparent', border:`1.5px dashed ${T.borderHi}`, borderRadius:18, padding:20, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', minHeight:160, color:T.inkMute, fontSize:13, fontWeight:500, gap:8, transition:'border-color 0.15s' }}
-              onMouseEnter={e=>e.currentTarget.style.borderColor=T.green}
-              onMouseLeave={e=>e.currentTarget.style.borderColor=T.borderHi}>
-              + Neues Beet anlegen
-            </div>
-          </div>
-
-          {/* Weekly tasks */}
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-            <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:T.inkMute }}>Diese Woche · This week</div>
-            <button onClick={()=>navigate('/calendar')} style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontFamily:'JetBrains Mono,monospace', fontSize:10, fontWeight:600, padding:0 }}>Kalender →</button>
-          </div>
-          <div style={{ display:'grid', gridTemplateColumns:weekTodos.length>0?'repeat(auto-fill,minmax(200px,1fr))':'1fr', gap:12 }}>
-            {weekTodos.length === 0 ? (
-              <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:16, boxShadow:'0 1px 0 rgba(31,42,27,0.04)', color:T.inkMute, fontSize:13 }}>
-                Keine Aufgaben diese Woche.
-              </div>
-            ) : weekTodos.map(t => {
-              const d = new Date(t.date + 'T00:00:00');
-              const dayLabel = DE_DAYS[d.getDay()];
-              return (
-                <div key={t.id} style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:14, padding:16, boxShadow:'0 1px 0 rgba(31,42,27,0.04)', opacity:t.done?0.5:1 }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
-                    <div style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:T.terra, fontWeight:600 }}>{dayLabel}</div>
-                    <button onClick={()=>toggleTodo(t.id)} style={{ width:16, height:16, borderRadius:3, border:`1.5px solid ${t.done?T.green:T.borderHi}`, background:t.done?T.green:'transparent', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, padding:0 }}>
-                      {t.done && <span style={{ color:'#fff', fontSize:9, fontWeight:700, lineHeight:1 }}>✓</span>}
-                    </button>
-                  </div>
-                  <div style={{ fontSize:13, fontWeight:500, textDecoration:t.done?'line-through':'none' }}>{t.title}</div>
-                </div>
-              );
-            })}
+        <div>
+          <div style={{ ...LABEL, marginBottom:8 }}>Wetter</div>
+          <div style={{ ...card, fontSize:12.5, color:T.inkDim, lineHeight:1.55 }}>
+            {weather.error === 'no-key' && 'Kein Wetter-API-Schlüssel hinterlegt — Frost- und Gießhinweise sind deaktiviert.'}
+            {weather.error === 'geo-denied' && 'Standortfreigabe abgelehnt. Ohne Standort gibt es keine lokalen Wetterhinweise.'}
+            {weather.error === 'fetch-failed' && 'Wetterdaten konnten nicht geladen werden.'}
+            {!weather.error && !weather.loading && `${weather.city}: ${weather.temp}° ${weather.description}`}
+            {weather.loading && 'Wetter wird geladen…'}
           </div>
         </div>
       </div>
-      {showAuth && <AuthModal onClose={()=>setShowAuth(false)} />}
-    </>
+    </Sheet>
+  );
+
+  return (
+    <div style={{
+      minHeight:'100vh', background:T.bg,
+      padding:mobile
+        ? `calc(14px + var(--safe-t)) 16px calc(var(--tabbar-h) + 16px)`
+        : '30px 28px calc(var(--tabbar-h) + 28px)',
+    }}>
+      <div style={{ maxWidth:1200, margin:'0 auto', display:'flex', flexDirection:'column', gap:mobile ? 22 : 28 }}>
+        {header}
+        {mobile && (
+          <div style={{ display:'flex', gap:8 }}>
+            <Btn variant="primary" full onClick={() => navigate('/autoplan')}>✦ Plan generieren</Btn>
+            <Btn onClick={() => navigate('/onboarding')} ariaLabel="Neues Beet anlegen">+</Btn>
+          </div>
+        )}
+        {adviceSection}
+        {tasksSection}
+        {bedsSection}
+        {sowSection}
+      </div>
+      {settingsSheet}
+      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+      <TabBar active="home" />
+    </div>
   );
 }

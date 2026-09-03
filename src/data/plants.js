@@ -1,5 +1,5 @@
 // Plant library — research-based companion planting data for Central Europe
-import { PLANT_DETAILS, FEEDERS } from './plantDetails';
+import { PLANT_DETAILS, FEEDERS } from './plantDetails.js';
 
 export const SNAP_CM = 5;
 // Sources: Gertrud Franck "Mischkulturen im Gemüsegarten", DGG,

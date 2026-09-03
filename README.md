@@ -26,7 +26,10 @@ zurückkommt, plus Empfehlung nach Stark-/Mittel-/Schwachzehrer.
 
 **Plan generieren.** Der Generator baut eine echte Reihenmischkultur: hohe
 Pflanzen nach hinten, keine verfeindeten Nachbarreihen, Reihenabstände nach
-den Pflanzabständen.
+den Pflanzabständen. Er packt so viel von deiner Auswahl ins Beet, wie die
+Tiefe hergibt — und sagt zu jeder Pflanze, die es nicht hineingeschafft hat,
+warum (falsche Saison, zu tief für das Beet, kein Platz mehr). Aus der
+Beetansicht heraus startbar, mit dem Beet und der Saison als Vorgabe.
 
 **Ernte protokollieren.** Geplanter gegen tatsächlichen Ertrag je Beet.
 
@@ -63,6 +66,7 @@ npm install
 npm run dev       # Entwicklungsserver
 npm run build     # Produktions-Build nach dist/
 npm run preview   # Build lokal ausliefern (Service Worker aktiv)
+npm test          # Tests des Plan-Generators
 npm run icons     # Logo/Icons aus assets/logo-source.png neu erzeugen
 ```
 
@@ -77,6 +81,7 @@ src/
   data/plantDetails.js   Aussaat-/Erntemonate, Zehrerklasse, Wurzeltiefe
   lib/beds.js            Beet-Store (localStorage + Firestore-Spiegel)
   lib/tasks.js           Aufgaben-Store
+  utils/planGenerator.js Reihenmischkultur-Generator (siehe tests/)
   utils/taskEngine.js    Aufgaben aus der Bepflanzung ableiten
   utils/rotationAdvice.js Fruchtfolge-Analyse
   utils/weatherAdvice.js Wetterhinweise

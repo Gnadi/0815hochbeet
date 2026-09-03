@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { LABEL, MONO, T } from '../theme';
-import { PLANTS, SEASONS, pairScore, plantById } from '../data/plants';
+import { PLANTS, SEASONS, plantById } from '../data/plants';
 import { FEEDERS, monthRangeLabel } from '../data/plantDetails';
+import { GOALS, SKIP_REASONS, generatePlan } from '../utils/planGenerator';
 import { createBed, currentSeason, saveBed } from '../lib/beds';
 import { useBedRecord, useBeds } from '../hooks/useBeds';
 import { useBreakpoint } from '../hooks/useBreakpoint';
@@ -17,107 +18,58 @@ const field = {
   border:`1px solid ${T.border}`, background:T.panel, color:T.ink, outline:'none', minHeight:48,
 };
 
-const MAX_PER_BAND = 24;
-
-const GOALS = [
-  { id:'easy',   de:'Pflegeleicht', desc:'Robuste Kulturen, wenig Gießen.',        pick:p => p.difficulty === 1 && p.water !== 'high' },
-  { id:'yield',  de:'Viel Ertrag',  desc:'Maximale Erntemenge je m².',             pick:p => p.yield >= 0.3 },
-  { id:'family', de:'Vielfalt',     desc:'Bunte Mischung für die Küche.',          pick:p => p.yield > 0 },
-  { id:'kids',   de:'Mit Kindern',  desc:'Schnelle Erfolge, große Samen.',         pick:p => p.tags.includes('kinder') || p.harvestWeeks <= 6 },
-  { id:'herbs',  de:'Küchenkräuter',desc:'Würze direkt vor der Tür.',              pick:p => p.tags.includes('kräuter') || p.tags.includes('schutzpflanze') },
-];
-
 /**
- * Builds a row-based mixed-culture plan (Reihenmischkultur).
- *
- * Rows run across the bed. The set of rows is chosen first — variety before
- * repetition — then sorted tall-to-short so nothing shades what is planted in
- * front of it, and finally any bad neighbours are separated by local swaps.
- *
- * Choosing the set before the order matters: a purely greedy row-by-row loop
- * that also enforced "never taller than the row behind" painted itself into a
- * corner and filled two thirds of the bed with radishes.
+ * Says what happened to the plants the gardener picked that are not in the
+ * plan. Leaving a choice out without a word reads as the app ignoring you,
+ * which is exactly how the greedy packer used to come across.
  */
-function generatePlan({ picks, widthCm, depthCm, heightCm, season, goal }) {
-  const pool = picks
-    .map(plantById)
-    .filter(p => p && p.seasons.includes(season) && p.spacing_cm <= depthCm);
-  if (!pool.length) return null;
+function SkippedNotice({ skipped, season, depthCm, onBack }) {
+  if (!skipped?.length) return null;
+  const seasonDe = SEASONS.find(x => x.id === season)?.de;
+  const groups = [
+    {
+      reason: SKIP_REASONS.season,
+      title: `Nicht in der ${seasonDe}-Saison`,
+      hint: 'Diese Kulturen wachsen zu einer anderen Jahreszeit. Wechsle die Saison oder wähle sie ab.',
+    },
+    {
+      reason: SKIP_REASONS.depth,
+      title: 'Zu tief für dieses Beet',
+      hint: `Eine Reihe braucht so viel Tiefe, wie die Pflanze Abstand braucht — dein Beet ist ${depthCm} cm tief.`,
+    },
+    {
+      reason: SKIP_REASONS.space,
+      title: 'Kein Platz mehr',
+      hint: `Die ${depthCm} cm Beettiefe sind durch die übrigen Reihen belegt. Wähle etwas ab oder plane ein tieferes Beet.`,
+    },
+  ].map(g => ({ ...g, items: skipped.filter(s => s.reason === g.reason) })).filter(g => g.items.length);
 
-  // How well a plant mixes with the rest of the selection, plus the goal bias.
-  const affinity = p => pool.reduce((s, o) => (o.id === p.id ? s : s + pairScore(p.id, o.id)), 0);
-  const goalScore = p =>
-    goal === 'yield' ? p.yield * 3 :
-    goal === 'easy' ? (3 - p.difficulty) * 2 :
-    goal === 'kids' ? Math.max(0, 12 - p.harvestWeeks) / 3 :
-    0;
-  const ranked = [...pool].sort((a, b) => (affinity(b) + goalScore(b)) - (affinity(a) + goalScore(a)));
-
-  // Pass 1 — one row of each plant that still fits.
-  const rows = [];
-  let used = 0;
-  for (const p of ranked) {
-    if (used + p.spacing_cm > depthCm) continue;
-    rows.push(p);
-    used += p.spacing_cm;
-  }
-  if (!rows.length) return null;
-
-  // Pass 2 — spend the remaining depth on the least-used plants that fit.
-  for (let guard = 0; guard < 40; guard++) {
-    const count = id => rows.filter(r => r.id === id).length;
-    const fits = ranked
-      .filter(p => used + p.spacing_cm <= depthCm)
-      .sort((a, b) => count(a.id) - count(b.id) || a.spacing_cm - b.spacing_cm);
-    if (!fits.length) break;
-    rows.push(fits[0]);
-    used += fits[0].spacing_cm;
-  }
-
-  // Tall at the back (top of the canvas = north side of the bed).
-  rows.sort((a, b) => b.height_cm - a.height_cm);
-
-  // Separate bad neighbours by swapping in a compatible row from further down.
-  for (let i = 1; i < rows.length; i++) {
-    if (pairScore(rows[i - 1].id, rows[i].id) >= 0) continue;
-    const j = rows.findIndex((p, k) =>
-      k > i &&
-      pairScore(rows[i - 1].id, p.id) >= 0 &&
-      (k + 1 >= rows.length || pairScore(p.id, rows[k + 1].id) >= 0));
-    if (j > -1) { const tmp = rows[i]; rows[i] = rows[j]; rows[j] = tmp; }
-  }
-
-  // Lay the rows out and fill each with evenly spaced plants.
-  const cells = {};
-  const layout = [];
-  let y = 0;
-  rows.forEach(plant => {
-    const rowY = Math.round(y + plant.spacing_cm / 2);
-    const cols = Math.max(1, Math.floor(widthCm / plant.spacing_cm));
-    const shown = Math.min(cols, MAX_PER_BAND);
-    const perCircle = Math.ceil(cols / shown);
-    const stepCm = (widthCm - plant.spacing_cm) / Math.max(1, shown - 1);
-    for (let i = 0; i < shown; i++) {
-      // Exact centimetres, not 5 cm steps — snapping distorted the even
-      // spacing enough to make neighbouring circles visibly overlap.
-      const x = Math.round(plant.spacing_cm / 2 + (shown === 1 ? (widthCm - plant.spacing_cm) / 2 : i * stepCm));
-      const key = `${x}_${rowY}`;
-      if (cells[key]) continue;
-      const count = i === shown - 1 ? Math.max(1, cols - perCircle * (shown - 1)) : perCircle;
-      cells[key] = { plantId: plant.id, x, y: rowY, count };
-    }
-    layout.push({ plant, total: cols, rowY, yieldKg: plant.yield * cols });
-    y += plant.spacing_cm;
-  });
-
-  const totalCount = layout.reduce((s, r) => s + r.total, 0);
-  const yieldKg = layout.reduce((s, r) => s + r.yieldKg, 0);
-  const careHours = Math.round((layout.reduce((s, r) => s + r.plant.difficulty, 0) / 2 + layout.length * 0.3) * 10) / 10;
-  const kinds = [...new Set(layout.map(r => r.plant.id))];
-  const tooDeep = kinds.map(plantById).filter(p => p.rootDepth_cm > heightCm);
-  const unused = pool.filter(p => !kinds.includes(p.id));
-
-  return { cells, rows: layout, totalCount, yieldKg, careHours, tooDeep, unused, kinds, usedDepth: y };
+  return (
+    <div style={{ padding:14, borderRadius:14, background:T.warnBg, border:`1px solid ${T.warnBorder}`, marginBottom:14 }}>
+      <div style={{ ...LABEL, color:T.warn, marginBottom:10 }}>
+        {skipped.length} deiner Auswahl {skipped.length === 1 ? 'ist' : 'sind'} nicht im Plan
+      </div>
+      {groups.map(g => (
+        <div key={g.reason} style={{ marginBottom:12 }}>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:6 }}>
+            {g.items.map(({ plant }) => (
+              <span key={plant.id} style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 10px', borderRadius:999, background:T.panel, border:`1px solid ${T.border}`, fontSize:12, fontWeight:600 }}>
+                <span aria-hidden="true" style={{ width:14, height:14, borderRadius:7, background:`oklch(0.64 0.1 ${plant.hue})` }} />
+                {plant.de}
+                {g.reason === SKIP_REASONS.depth && (
+                  <span style={{ ...MONO, fontSize:9.5, color:T.inkMute }}>{plant.spacing_cm} cm</span>
+                )}
+              </span>
+            ))}
+          </div>
+          <div style={{ fontSize:11.5, color:T.inkDim, lineHeight:1.5 }}>
+            <strong style={{ color:T.ink }}>{g.title}.</strong> {g.hint}
+          </div>
+        </div>
+      ))}
+      <Btn size="sm" onClick={onBack}>← Auswahl anpassen</Btn>
+    </div>
+  );
 }
 
 export default function AutoPlan() {
@@ -144,6 +96,7 @@ export default function AutoPlan() {
   });
   const [applyTo, setApplyTo] = useState(targetBed?.id || 'new');
   const [saving, setSaving] = useState(false);
+  const [touchedPicks, setTouchedPicks] = useState(false);
 
   const seasonPlants = useMemo(() => PLANTS.filter(p => p.seasons.includes(season)), [season]);
 
@@ -156,19 +109,30 @@ export default function AutoPlan() {
     cells:plan.cells, plantStatus:{}, bedWidth:Number(dims.width), bedDepth:Number(dims.depth),
   } : null, [plan, dims]);
 
+  function presetFor(id) {
+    const g = GOALS.find(x => x.id === id);
+    return seasonPlants.filter(g.pick).slice(0, 7).map(p => p.id);
+  }
+
+  /**
+   * A goal always changes the ranking, but it only refills the selection while
+   * the gardener has not touched it. Silently replacing hand-picked plants is
+   * the other way a choice appears to be "ignored".
+   */
   function applyGoalPreset(id) {
     setGoal(id);
-    const g = GOALS.find(x => x.id === id);
-    const auto = seasonPlants.filter(g.pick).slice(0, 7).map(p => p.id);
+    if (touchedPicks) return;
+    const auto = presetFor(id);
     if (auto.length >= 2) setPicks(auto);
   }
 
   function toggle(id) {
+    setTouchedPicks(true);
     setPicks(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]));
   }
 
   function accept() {
-    if (!plan) return;
+    if (!plan || !plan.rows.length) return;
     setSaving(true);
     if (applyTo !== 'new') {
       const target = beds.find(b => b.id === applyTo);
@@ -270,12 +234,20 @@ export default function AutoPlan() {
         })}
       </div>
 
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, marginBottom:8, flexWrap:'wrap' }}>
         <div style={LABEL}>Pflanzen · {picks.filter(id => seasonPlants.some(p => p.id === id)).length} in Saison</div>
-        <button onClick={() => setPicks([])}
-          style={{ background:'none', border:'none', color:T.inkMute, cursor:'pointer', ...MONO, fontSize:10, minHeight:32 }}>
-          zurücksetzen
-        </button>
+        <div style={{ display:'flex', gap:10 }}>
+          {touchedPicks && (
+            <button onClick={() => { setPicks(presetFor(goal)); setTouchedPicks(false); }}
+              style={{ background:'none', border:'none', color:T.green, cursor:'pointer', ...MONO, fontSize:10, minHeight:32, fontWeight:700 }}>
+              Vorschlag zum Ziel
+            </button>
+          )}
+          <button onClick={() => { setPicks([]); setTouchedPicks(true); }}
+            style={{ background:'none', border:'none', color:T.inkMute, cursor:'pointer', ...MONO, fontSize:10, minHeight:32 }}>
+            zurücksetzen
+          </button>
+        </div>
       </div>
       <div style={{ display:'grid', gridTemplateColumns:mobile ? 'repeat(4,1fr)' : 'repeat(6,1fr)', gap:6 }}>
         {seasonPlants.map(p => {
@@ -294,11 +266,11 @@ export default function AutoPlan() {
     </>
   );
 
-  const step3 = plan ? (
+  const step3 = plan && plan.rows.length > 0 ? (
     <>
       <div style={LABEL}>Schritt 3 · Ergebnis</div>
       <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:mobile ? 24 : 28, margin:'6px 0 14px', fontWeight:500, fontStyle:'italic', color:T.green }}>
-        {GOALS.find(g => g.id === goal).de}-Plan
+        {GOALS.find(g => g.id === goal).title}
       </h2>
 
       <div style={{ marginBottom:14 }}>
@@ -337,19 +309,23 @@ export default function AutoPlan() {
         ))}
       </div>
 
-      {plan.unused.length > 0 && (
-        <div style={{ fontSize:11.5, color:T.inkMute, lineHeight:1.5, marginBottom:8 }}>
-          Nicht untergebracht: {plan.unused.map(p => p.de).join(', ')} — dafür fehlt die Beettiefe oder es gäbe Konflikte in der Nachbarreihe.
-        </div>
-      )}
+      <SkippedNotice skipped={plan.skipped} season={season} depthCm={Number(dims.depth)} onBack={() => setStep(2)} />
       <div style={{ fontSize:12, color:T.inkDim, lineHeight:1.6 }}>
         Hohe Pflanzen stehen hinten, damit sie die niedrigen nicht beschatten. Benachbarte Reihen sind auf gute Mischkultur geprüft.
       </div>
     </>
   ) : (
-    <div style={{ ...card, textAlign:'center', padding:26, color:T.inkDim, fontSize:13, lineHeight:1.6 }}>
-      Mit dieser Auswahl lässt sich kein Plan bauen. Wähle mehr Pflanzen für die {SEASONS.find(s => s.id === season).de}-Saison oder ein tieferes Beet.
-    </div>
+    <>
+      <div style={LABEL}>Schritt 3 · Ergebnis</div>
+      <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:mobile ? 24 : 28, margin:'6px 0 14px', fontWeight:500 }}>
+        Daraus wird noch <em style={{ color:T.terra, fontStyle:'italic' }}>kein Plan</em>
+      </h2>
+      <div style={{ ...card, marginBottom:14, fontSize:13, color:T.inkDim, lineHeight:1.6 }}>
+        Keine deiner gewählten Pflanzen lässt sich in ein {dims.depth} cm tiefes
+        {' '}{SEASONS.find(x => x.id === season)?.de}-Beet setzen.
+      </div>
+      <SkippedNotice skipped={plan?.skipped || []} season={season} depthCm={Number(dims.depth)} onBack={() => setStep(2)} />
+    </>
   );
 
   return (
@@ -381,7 +357,7 @@ export default function AutoPlan() {
                 {step === 2 ? 'Plan generieren ✦' : 'Weiter →'}
               </Btn>
             ) : (
-              <Btn variant="primary" full size="lg" loading={saving} disabled={!plan} onClick={accept}>
+              <Btn variant="primary" full size="lg" loading={saving} disabled={!plan || plan.rows.length === 0} onClick={accept}>
                 {applyTo === 'new' ? 'Beet anlegen →' : 'In Beet übernehmen →'}
               </Btn>
             )}

@@ -20,6 +20,18 @@ import { LogoLockup } from '../components/Logo';
 import { haptic, useToast } from '../components/Toast';
 
 const card = { background:T.panel, border:`1px solid ${T.border}`, borderRadius:16, padding:14 };
+
+const SEASON_ORDER = ['spring', 'summer', 'autumn', 'winter'];
+
+/** Order-independent fingerprint of a whole year's plantings. */
+function seasonCellsSig(seasonCells = {}) {
+  return SEASON_ORDER.map(season => {
+    const cells = seasonCells[season] || {};
+    return Object.keys(cells).sort()
+      .map(k => `${k}:${cells[k]?.plantId}:${cells[k]?.count || 1}`)
+      .join(',');
+  }).join('|');
+}
 const field = {
   width:'100%', padding:'12px 14px', borderRadius:12,
   border:`1px solid ${T.border}`, background:T.panel, color:T.ink,
@@ -120,11 +132,32 @@ function Planner({ record, mobile, navigate, toast }) {
   const [harvestAmount, setHarvestAmount] = useState('');
 
   // ── Persistence ──────────────────────────────────────────────────────────
-  const dirty = useRef(false);
+  //
+  // `syncedSig` is the plan both sides last agreed on. Comparing against it
+  // tells a local edit (write it out) apart from a change that arrived from
+  // elsewhere — the generator's undo, another tab, a Firestore pull — which
+  // has to be adopted instead. Without this the canvas kept showing a plan the
+  // store had already thrown away.
+  const syncedSig = useRef(null);
+
   useEffect(() => {
-    if (!dirty.current) { dirty.current = true; return; }   // skip the hydrate render
+    const sig = seasonCellsSig(bed.seasonCells);
+    if (syncedSig.current === null) { syncedSig.current = sig; return; }  // hydrate render
+    if (sig === syncedSig.current) {
+      saveBed(bedId, { season: bed.season });
+      return;
+    }
+    syncedSig.current = sig;
     saveBed(bedId, { seasonCells: bed.seasonCells, season: bed.season });
   }, [bed.seasonCells, bed.season, bedId]);
+
+  useEffect(() => {
+    const sig = seasonCellsSig(record.seasonCells);
+    if (syncedSig.current === null || sig === syncedSig.current) return;
+    syncedSig.current = sig;
+    bed.loadSeasonCells(record.seasonCells);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [record.seasonCells]);
 
   const notesTimer = useRef(null);
   function changeNotes(v) {
@@ -194,6 +227,14 @@ function Planner({ record, mobile, navigate, toast }) {
     if (!Object.keys(bed.cells).length) return;
     bed.clearSeason();
     toast({ message:`${SEASONS.find(s => s.id === bed.season)?.de} geleert`, action: () => bed.undo() });
+  }
+
+  /**
+   * Hands the current bed and season to the generator, so the suggestion is
+   * built for these exact measurements and lands back in this season.
+   */
+  function suggestPlan() {
+    navigate(`/autoplan?bed=${bedId}&season=${bed.season}`);
   }
 
   function openSettings() {
@@ -563,6 +604,25 @@ function Planner({ record, mobile, navigate, toast }) {
     </div>
   );
 
+  /**
+   * An empty season is exactly when a generated plan is worth most, so the
+   * offer appears there rather than being buried in a menu.
+   */
+  const emptySeasonCta = Object.keys(bed.cells).length === 0 && (
+    <div style={{ ...card, borderStyle:'dashed', borderColor:T.borderHi, display:'flex', alignItems:'center', gap:12, padding:'12px 14px' }}>
+      <span aria-hidden="true" style={{ fontSize:20, lineHeight:1, flexShrink:0 }}>✦</span>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:13.5, fontWeight:600 }}>
+          {SEASONS.find(sx => sx.id === bed.season)?.de} ist noch leer
+        </div>
+        <div style={{ fontSize:11.5, color:T.inkDim, lineHeight:1.45 }}>
+          Lass dir eine Mischkultur für {record.width} × {record.depth} cm vorschlagen.
+        </div>
+      </div>
+      <Btn variant="terra" onClick={suggestPlan}>Vorschlag</Btn>
+    </div>
+  );
+
   const armedBar = (
     <div style={{ ...card, display:'flex', alignItems:'center', gap:11, padding:'10px 12px' }}>
       {armedPlant ? (
@@ -590,6 +650,13 @@ function Planner({ record, mobile, navigate, toast }) {
 
   const toolRow = (
     <div className="hscroll no-print" style={{ display:'flex', gap:6 }}>
+      {/* An empty season already offers this on its own card — one prompt is enough. */}
+      {!emptySeasonCta && (
+        <button onClick={suggestPlan}
+          style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42, background:T.terra, color:'var(--panel)', border:'1px solid transparent' }}>
+          ✦ Vorschlag
+        </button>
+      )}
       {[
         { id:'analysis', label:`Analyse${bed.issues.length ? ` · ${bed.issues.length}` : ''}`, tone: bed.issues.length ? 'bad' : null },
         { id:'care',     label:'Pflege' },
@@ -660,8 +727,8 @@ function Planner({ record, mobile, navigate, toast }) {
           <div style={{ fontFamily:"'Fraunces',serif", fontSize:19, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{record.name}</div>
           <div style={{ ...MONO, fontSize:9.5, color:T.inkMute }}>{record.width} × {record.depth} cm · bearbeiten</div>
         </button>
-        <IconBtn size={40} label="Rückgängig" disabled={!bed.canUndo} onClick={bed.undo}>↶</IconBtn>
-        <IconBtn size={40} label="Wiederholen" disabled={!bed.canRedo} onClick={bed.redo}>↷</IconBtn>
+        <IconBtn size={40} label="Letzte Änderung rückgängig" disabled={!bed.canUndo} onClick={bed.undo}>↶</IconBtn>
+        <IconBtn size={40} label="Änderung wiederholen" disabled={!bed.canRedo} onClick={bed.redo}>↷</IconBtn>
         <IconBtn size={40} label="Beet-Einstellungen" onClick={openSettings}>⚙</IconBtn>
       </header>
 
@@ -670,6 +737,7 @@ function Planner({ record, mobile, navigate, toast }) {
       <div style={{ padding:'14px 14px 0' }}>{canvas}</div>
       <div style={{ padding:'10px 14px 0', display:'flex', flexDirection:'column', gap:10 }}>
         {selectionBar}
+        {emptySeasonCta}
         {armedBar}
         {toolRow}
       </div>
@@ -696,17 +764,18 @@ function Planner({ record, mobile, navigate, toast }) {
       </aside>
 
       <main style={{ padding:'26px 28px 40px', minWidth:0 }}>
-        <header style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:16, marginBottom:18 }}>
-          <div style={{ minWidth:0 }}>
-            <div style={LABEL}>{record.width} × {record.depth} × {record.height} cm</div>
-            <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, margin:'4px 0 0' }}>
+        <header style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:16, marginBottom:18, flexWrap:'wrap' }}>
+          <div style={{ minWidth:0, flex:'1 1 240px' }}>
+            <div style={{ ...LABEL, whiteSpace:'nowrap' }}>{record.width} × {record.depth} × {record.height} cm</div>
+            <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, margin:'4px 0 0', overflowWrap:'anywhere' }}>
               <em style={{ color:T.green, fontStyle:'italic' }}>{record.name}</em>
             </h1>
           </div>
-          <div className="no-print" style={{ display:'flex', gap:8, flexShrink:0 }}>
-            <IconBtn label="Rückgängig" disabled={!bed.canUndo} onClick={bed.undo}>↶</IconBtn>
-            <IconBtn label="Wiederholen" disabled={!bed.canRedo} onClick={bed.redo}>↷</IconBtn>
+          <div className="no-print" style={{ display:'flex', gap:8, flexShrink:0, flexWrap:'wrap', justifyContent:'flex-end' }}>
+            <IconBtn label="Letzte Änderung rückgängig" disabled={!bed.canUndo} onClick={bed.undo}>↶</IconBtn>
+            <IconBtn label="Änderung wiederholen" disabled={!bed.canRedo} onClick={bed.redo}>↷</IconBtn>
             <IconBtn label="Sonnenverlauf einblenden" active={showSun} onClick={() => setShowSun(s => !s)}>☀</IconBtn>
+            <Btn variant="terra" onClick={suggestPlan}>✦ Vorschlag</Btn>
             <Btn onClick={() => navigate(`/bed/${bedId}/seasons`)}>🗓 Jahresplan</Btn>
             <Btn onClick={openSettings}>⚙ Einstellungen</Btn>
           </div>
@@ -717,6 +786,7 @@ function Planner({ record, mobile, navigate, toast }) {
         {canvas}
         <div style={{ marginTop:12, display:'flex', flexDirection:'column', gap:10 }}>
           {selectionBar}
+          {emptySeasonCta}
           {armedBar}
         </div>
         <div className="no-print" style={{ marginTop:14, ...MONO, fontSize:11, color:T.inkMute, display:'flex', gap:18, flexWrap:'wrap' }}>

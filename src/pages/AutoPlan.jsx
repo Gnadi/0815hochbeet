@@ -130,7 +130,12 @@ export default function AutoPlan() {
 
   const [step, setStep] = useState(1);
   const [goal, setGoal] = useState('family');
-  const [season, setSeason] = useState(currentSeason());
+  // Arriving from a bed carries that bed's season, so the suggestion replaces
+  // the season the gardener was actually looking at.
+  const [season, setSeason] = useState(() => {
+    const wanted = params.get('season');
+    return SEASONS.some(x => x.id === wanted) ? wanted : currentSeason();
+  });
   const [picks, setPicks] = useState(() => PLANTS.filter(p => p.tags.includes('anfänger')).map(p => p.id).slice(0, 6));
   const [dims, setDims] = useState({
     width: targetBed?.width || beds[0]?.width || 120,
@@ -191,8 +196,17 @@ export default function AutoPlan() {
     <>
       <div style={LABEL}>Schritt 1 · Beet &amp; Saison</div>
       <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:mobile ? 24 : 28, margin:'6px 0 14px', fontWeight:500 }}>
-        Für welches <em style={{ color:T.green, fontStyle:'italic' }}>Beet</em>?
+        {targetBed
+          ? <>Vorschlag für <em style={{ color:T.green, fontStyle:'italic' }}>{targetBed.name}</em></>
+          : <>Für welches <em style={{ color:T.green, fontStyle:'italic' }}>Beet</em>?</>}
       </h2>
+
+      {applyTo !== 'new' && (
+        <div style={{ padding:'11px 13px', borderRadius:12, background:T.warnBg, border:`1px solid ${T.warnBorder}`, fontSize:12, color:T.inkDim, lineHeight:1.5, marginBottom:16 }}>
+          Der Vorschlag ersetzt die bisherige Bepflanzung in der gewählten Saison.
+          Andere Saisons bleiben unberührt, und du kannst den Schritt danach rückgängig machen.
+        </div>
+      )}
 
       {beds.length > 0 && (
         <>
@@ -345,8 +359,11 @@ export default function AutoPlan() {
     }}>
       <div style={{ maxWidth:560, margin:'0 auto' }}>
         <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
-          <IconBtn size={40} tone="plain" label="Zurück" onClick={() => (step > 1 ? setStep(s => s - 1) : navigate(-1))}>‹</IconBtn>
-          <div style={{ ...LABEL }}>Plan generieren</div>
+          <IconBtn size={40} tone="plain" label="Zurück"
+            onClick={() => (step > 1 ? setStep(s => s - 1) : targetBed ? navigate(`/bed/${targetBed.id}`) : navigate(-1))}>‹</IconBtn>
+          <div style={{ ...LABEL }}>
+            Plan generieren{targetBed ? ` · ${targetBed.name}` : ''}
+          </div>
         </div>
 
         <div style={{ background:T.paper, borderRadius:20, border:`1px solid ${T.border}`, boxShadow:'var(--shadow)', padding:mobile ? '22px 18px' : 34 }}>

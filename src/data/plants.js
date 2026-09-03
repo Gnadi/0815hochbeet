@@ -1,10 +1,12 @@
 // Plant library — research-based companion planting data for Central Europe
+import { PLANT_DETAILS, FEEDERS } from './plantDetails';
+
 export const SNAP_CM = 5;
 // Sources: Gertrud Franck "Mischkulturen im Gemüsegarten", DGG,
 // Sepp Brunner, Bioland-Anbaurichtlinien, multiple German horticultural
 // research publications. This data is also seeded to Firestore (plants/{id}).
 
-export const PLANTS = [
+const BASE_PLANTS = [
   { id:"tomato",     de:"Tomate",       en:"Tomato",       glyph:"T",  hue:8,   spacing_cm:60, sun:"full", water:"high", seasons:["summer","autumn"],                    yield:1.8, sowDepth:0.5,  harvestWeeks:12, family:"Solanaceae",     description:"Wärmeliebend, benötigt Stütze. Ideal für sonnige, windgeschützte Plätze.",                             careNotes:"Regelmäßig ausgeizen, mulchen, gleichmäßig wässern. Nicht von oben gießen." },
   { id:"carrot",     de:"Karotte",      en:"Carrot",       glyph:"K",  hue:28,  spacing_cm:5,  sun:"full", water:"low",  seasons:["spring","summer","autumn"],           yield:0.4, sowDepth:1,    harvestWeeks:10, family:"Apiaceae",       description:"Tiefwurzler, lockert den Boden. Mag lockere, sandige, tiefgründige Erde.",                            careNotes:"Beim Keimen gleichmäßig feucht halten, danach trockenheitsverträglich." },
   { id:"lettuce",    de:"Salat",        en:"Lettuce",      glyph:"S",  hue:95,  spacing_cm:25, sun:"part", water:"med",  seasons:["spring","summer","autumn"],           yield:0.3, sowDepth:0.5,  harvestWeeks:6,  family:"Asteraceae",     description:"Schnellwachsend, ideal als Lückenfüller. Verträgt Halbschatten gut.",                                  careNotes:"Vor Hitzestau schützen. Gleichmäßig und bodenah gießen." },
@@ -27,6 +29,18 @@ export const PLANTS = [
   { id:"rucola",     de:"Rucola",       en:"Rocket",       glyph:"Ru", hue:105, spacing_cm:15, sun:"part", water:"med",  seasons:["spring","summer","autumn"],           yield:0.15,sowDepth:0.5,  harvestWeeks:4,  family:"Brassicaceae",   description:"Würzige Salat-Alternative mit pfeffrigem Aroma. Schnellwachsend und robust.",                         careNotes:"Kühlen Standort bevorzugen — bei Hitze schießt er schnell und wird bitter." },
   { id:"chive",      de:"Schnittlauch", en:"Chive",        glyph:"Sn", hue:115, spacing_cm:12, sun:"full", water:"low",  seasons:["spring","summer","autumn","winter"],  yield:0.1, sowDepth:0.5,  harvestWeeks:52, family:"Amaryllidaceae", description:"Mehrjährig. Schöne lila Blüten ziehen Bestäuber an. Sehr robust.",                                   careNotes:"Regelmäßiges Ernten fördert Wachstum. Sehr winterhart und pflegeleicht." },
 ];
+
+// Merge the agronomic detail (sowing months, feeder class, root depth …) onto
+// every plant so callers only ever see one flat object.
+export const PLANTS = BASE_PLANTS.map(p => ({
+  precultureMonths: [], sowMonths: [], harvestMonths: [],
+  feeder: 'medium', rootDepth_cm: 30, height_cm: 40,
+  difficulty: 1, frostHardy: false, perennial: false, tags: [],
+  ...p,
+  ...(PLANT_DETAILS[p.id] || {}),
+}));
+
+export { FEEDERS };
 
 // COMPANIONS — research-based matrix (Mischkultur / Central Europe)
 // +1 = Gute Nachbarn | -1 = Schlechte Nachbarn
@@ -62,13 +76,6 @@ export const SEASONS = [
   { id:"winter", de:"Winter",   en:"Winter", glyph:"❄", hue:210 },
 ];
 
-export const SHAPES = {
-  rect:     { id:"rect",     de:"Rechteck", en:"Rectangle", w:8,  h:4,  preset:true,  mask:()=>true },
-  square:   { id:"square",   de:"Quadrat",  en:"Square",    w:5,  h:5,  preset:true,  mask:()=>true },
-  l:        { id:"l",        de:"L-Form",   en:"L-shape",   w:7,  h:6,  preset:true,  mask:(x,y)=>!(x>=4&&y<3) },
-  freeform: { id:"freeform", de:"Frei",     en:"Freeform",  w:12, h:10, preset:false },
-};
-
 // Reads both directions so the COMPANIONS object doesn't need to be symmetric
 export function pairScore(a, b) {
   if (!a || !b || a === b) return 0;
@@ -76,16 +83,6 @@ export function pairScore(a, b) {
 }
 
 export function plantById(id) { return PLANTS.find(p => p.id === id); }
-
-export function defaultFreeformMask() {
-  const mask = {};
-  const W=8, H=6;
-  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
-    const cx=W/2-0.5, cy=H/2-0.5, dx=(x-cx)/(W/2), dy=(y-cy)/(H/2);
-    if (dx*dx+dy*dy*1.4<1.05) mask[`${x},${y}`]=true;
-  }
-  return mask;
-}
 
 // Human-readable companion reason for UI display
 export function companionReason(a, b) {
@@ -108,4 +105,35 @@ export function companionReason(a, b) {
     "basil-pepper":     "Basilikum schützt Paprika vor Blattläusen — gleicher Effekt wie bei der Tomate.",
   };
   return map[key] || null;
+}
+
+// ── Labels & lookups ──────────────────────────────────────────────────────
+export const SUN_DE   = { full:'Volle Sonne', part:'Halbschatten', shade:'Schatten' };
+export const SUN_ICON = { full:'☀', part:'⛅', shade:'☁' };
+export const WATER_DE   = { high:'Viel Wasser', med:'Mittlerer Bedarf', low:'Wenig Wasser' };
+export const WATER_ICON = { high:'💧💧💧', med:'💧💧', low:'💧' };
+export const DIFFICULTY_DE = { 1:'Einfach', 2:'Mittel', 3:'Anspruchsvoll' };
+
+/**
+ * Free-text search over the German and English name plus the tag list, so
+ * "schnell", "kräuter" or "tomato" all find something.
+ */
+export function searchPlants(list, query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return list;
+  return list.filter(p =>
+    p.de.toLowerCase().includes(q) ||
+    p.en.toLowerCase().includes(q) ||
+    p.family.toLowerCase().includes(q) ||
+    p.tags.some(t => t.toLowerCase().includes(q)),
+  );
+}
+
+/**
+ * Warns when a plant's roots need more soil than the bed offers. A classic
+ * raised-bed mistake: carrots or potatoes in a 25 cm shallow bed.
+ */
+export function fitsBedHeight(plant, bedHeightCm) {
+  if (!bedHeightCm) return true;
+  return plant.rootDepth_cm <= bedHeightCm;
 }

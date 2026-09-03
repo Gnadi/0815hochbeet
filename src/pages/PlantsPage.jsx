@@ -1,163 +1,158 @@
-import { useState } from 'react';
-import { T } from '../theme';
-import { PLANTS, SEASONS, pairScore, companionReason, plantById } from '../data/plants';
-import { PlantTile } from '../components/PlantTile';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { LABEL, MONO, T } from '../theme';
+import {
+  DIFFICULTY_DE, PLANTS, SEASONS, SUN_DE, SUN_ICON, WATER_ICON,
+  companionReason, pairScore, searchPlants,
+} from '../data/plants';
+import { FEEDERS, MONTHS_DE_SHORT, monthRangeLabel } from '../data/plantDetails';
+import { useBreakpoint } from '../hooks/useBreakpoint';
 import { TabBar } from '../components/TabBar';
+import { getFavorites, toggleFavorite } from '../components/PlantPicker';
 
-const MONO = { fontFamily: 'JetBrains Mono,monospace' };
+const card = { background:T.panel, border:`1px solid ${T.border}`, borderRadius:18 };
 
-function sunLabel(s) {
-  return s === 'full' ? '☀ Sonne' : s === 'part' ? '⛅ Halb' : '☁ Schatten';
-}
-function waterLabel(w) {
-  return w === 'high' ? '💧💧 Viel' : w === 'med' ? '💧 Mittel' : '○ Wenig';
-}
-
-function PlantCard({ plant }) {
-  const [open, setOpen] = useState(false);
-
-  const goodNeighbors = PLANTS.filter(o => o.id !== plant.id && pairScore(plant.id, o.id) === 1);
-  const badNeighbors  = PLANTS.filter(o => o.id !== plant.id && pairScore(plant.id, o.id) === -1);
-
+/** 12-month strip: when to pre-grow, when to sow, when to pick. */
+function SeasonStrip({ plant }) {
+  const now = new Date().getMonth();
   return (
-    <div
-      onClick={() => setOpen(o => !o)}
-      style={{
-        background: T.panel,
-        border: `1px solid ${T.border}`,
-        borderRadius: 18,
-        padding: 16,
-        cursor: 'pointer',
-        transition: 'box-shadow 0.15s',
-      }}
-    >
-      {/* Top row */}
-      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-        <PlantTile plant={plant} size={52} showLabel={false} draggable={false} />
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div style={{ fontFamily: 'Fraunces,serif', fontSize: 18, fontWeight: 500, color: T.ink }}>{plant.de}</div>
-            <div style={{ fontSize: 16, color: T.inkMute, marginLeft: 8, flexShrink: 0 }}>{open ? '▲' : '▼'}</div>
+    <div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(12,1fr)', gap:2 }}>
+        {MONTHS_DE_SHORT.map((m, i) => (
+          <div key={m} style={{ ...MONO, fontSize:8, textAlign:'center', color:i === now ? T.terra : T.inkMute, fontWeight:i === now ? 700 : 400 }}>
+            {m[0]}
           </div>
-
-          {/* Meta row */}
-          <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
-            <span style={{ ...MONO, fontSize: 10, color: T.inkDim }}>{sunLabel(plant.sun)}</span>
-            <span style={{ ...MONO, fontSize: 10, color: T.inkDim }}>{waterLabel(plant.water)}</span>
-            {plant.yield > 0 && (
-              <span style={{ ...MONO, fontSize: 10, color: T.greenLi }}>~{plant.yield} kg</span>
-            )}
-          </div>
-
-          {/* Season badges */}
-          <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
-            {SEASONS.filter(s => plant.seasons.includes(s.id)).map(s => (
-              <span key={s.id} style={{
-                ...MONO,
-                fontSize: 9,
-                padding: '2px 7px',
-                borderRadius: 999,
-                background: `oklch(0.85 0.07 ${s.hue})`,
-                color: `oklch(0.35 0.09 ${s.hue})`,
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-              }}>{s.de.toUpperCase()}</span>
+        ))}
+      </div>
+      {[
+        ['Vorziehen', plant.precultureMonths, T.ochre],
+        ['Aussaat', plant.sowMonths, T.green],
+        ['Ernte', plant.harvestMonths, T.terra],
+      ].map(([label, months, color]) => (
+        <div key={label} style={{ display:'flex', alignItems:'center', gap:8, marginTop:4 }}>
+          <div style={{ ...MONO, fontSize:8.5, color:T.inkMute, width:52, flexShrink:0 }}>{label}</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(12,1fr)', gap:2, flex:1 }}>
+            {Array.from({ length:12 }).map((_, i) => (
+              <div key={i} style={{
+                height:8, borderRadius:2,
+                background:months.includes(i) ? color : 'var(--border)',
+                outline:i === now ? `1px solid ${T.terra}` : 'none',
+              }} />
             ))}
           </div>
         </div>
+      ))}
+    </div>
+  );
+}
+
+function PlantCard({ plant, open, onToggle, favs, setFavs }) {
+  const good = PLANTS.filter(o => o.id !== plant.id && pairScore(plant.id, o.id) === 1);
+  const bad = PLANTS.filter(o => o.id !== plant.id && pairScore(plant.id, o.id) === -1);
+  const isFav = favs.includes(plant.id);
+
+  return (
+    <div style={{ ...card, overflow:'hidden' }}>
+      <button onClick={onToggle} aria-expanded={open}
+        style={{ display:'flex', gap:13, alignItems:'flex-start', width:'100%', textAlign:'left', padding:16, background:'none', border:'none', cursor:'pointer', fontFamily:'inherit', color:T.ink }}>
+        <span aria-hidden="true" style={{
+          width:50, height:50, borderRadius:14, flexShrink:0,
+          background:`radial-gradient(circle at 32% 26%, oklch(0.80 0.10 ${plant.hue}), oklch(0.52 0.14 ${plant.hue}))`,
+          display:'flex', alignItems:'center', justifyContent:'center',
+          fontFamily:"'Fraunces',serif", fontStyle:'italic', color:'#fff', fontSize:20,
+        }}>{plant.glyph}</span>
+
+        <span style={{ flex:1, minWidth:0 }}>
+          <span style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+            <span style={{ fontFamily:"'Fraunces',serif", fontSize:18, fontWeight:500 }}>{plant.de}</span>
+            <span style={{ color:T.inkMute, fontSize:13, flexShrink:0 }}>{open ? '▲' : '▼'}</span>
+          </span>
+          <span style={{ ...MONO, display:'flex', gap:9, marginTop:4, flexWrap:'wrap', fontSize:10, color:T.inkDim }}>
+            <span>{SUN_ICON[plant.sun]} {SUN_DE[plant.sun]}</span>
+            <span>{WATER_ICON[plant.water]}</span>
+            <span>↔ {plant.spacing_cm} cm</span>
+            {plant.yield > 0 && <span style={{ color:T.green }}>~{plant.yield} kg</span>}
+          </span>
+          <span style={{ display:'flex', gap:4, marginTop:6, flexWrap:'wrap' }}>
+            {SEASONS.filter(s => plant.seasons.includes(s.id)).map(s => (
+              <span key={s.id} style={{ ...MONO, fontSize:8.5, padding:'3px 8px', borderRadius:999, background:`oklch(0.85 0.07 ${s.hue})`, color:`oklch(0.32 0.09 ${s.hue})`, fontWeight:700 }}>
+                {s.de.toUpperCase()}
+              </span>
+            ))}
+            <span style={{ ...MONO, fontSize:8.5, padding:'3px 8px', borderRadius:999, background:T.bg, border:`1px solid ${T.border}`, color:T.inkDim, fontWeight:700 }}>
+              {DIFFICULTY_DE[plant.difficulty].toUpperCase()}
+            </span>
+          </span>
+          <span style={{ display:'block', fontSize:12.5, color:T.inkDim, lineHeight:1.55, marginTop:9 }}>{plant.description}</span>
+        </span>
+      </button>
+
+      <div style={{ padding:'0 16px 12px', display:'flex', justifyContent:'flex-end' }}>
+        <button onClick={() => setFavs(toggleFavorite(plant.id))}
+          aria-label={isFav ? `${plant.de} aus Favoriten entfernen` : `${plant.de} zu Favoriten`}
+          style={{ minHeight:38, padding:'0 14px', borderRadius:999, border:`1px solid ${isFav ? T.warnBorder : T.border}`, background:isFav ? T.warnBg : 'transparent', color:isFav ? T.ochre : T.inkMute, cursor:'pointer', fontSize:12, fontWeight:600, fontFamily:'inherit' }}>
+          {isFav ? '★ Favorit' : '☆ Merken'}
+        </button>
       </div>
 
-      {/* Description (always visible) */}
-      <p style={{ margin: '12px 0 0', fontSize: 13, color: T.inkDim, lineHeight: 1.5 }}>
-        {plant.description}
-      </p>
-
-      {/* Expanded content */}
       {open && (
-        <div style={{ marginTop: 14, borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+        <div style={{ padding:'0 16px 16px', borderTop:`1px solid ${T.border}`, paddingTop:14 }}>
+          <div style={{ ...LABEL, marginBottom:8 }}>Gartenjahr</div>
+          <SeasonStrip plant={plant} />
 
-          {/* Care notes */}
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ ...MONO, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: T.inkMute, marginBottom: 6 }}>
-              Pflege
-            </div>
-            <p style={{ margin: 0, fontSize: 13, color: T.inkDim, lineHeight: 1.5 }}>{plant.careNotes}</p>
-          </div>
-
-          {/* Harvest & spacing */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-            {plant.harvestWeeks > 0 && (
-              <span style={{ ...MONO, fontSize: 10, padding: '3px 9px', borderRadius: 999, background: T.bg, border: `1px solid ${T.border}`, color: T.inkDim }}>
-                ⏱ {plant.harvestWeeks} Wochen bis Ernte
-              </span>
-            )}
-            {plant.sowDepth > 0 && (
-              <span style={{ ...MONO, fontSize: 10, padding: '3px 9px', borderRadius: 999, background: T.bg, border: `1px solid ${T.border}`, color: T.inkDim }}>
-                ↓ {plant.sowDepth} cm Saattiefe
-              </span>
-            )}
-            <span style={{ ...MONO, fontSize: 10, padding: '3px 9px', borderRadius: 999, background: T.bg, border: `1px solid ${T.border}`, color: T.inkDim }}>
-              ↔ {plant.spacing_cm} cm Abstand
-            </span>
-          </div>
-
-          {/* Good neighbors */}
-          {goodNeighbors.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ ...MONO, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: T.good, marginBottom: 6 }}>
-                ✓ Gute Nachbarn
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, margin:'14px 0' }}>
+            {[
+              ['Aussaat', monthRangeLabel(plant.sowMonths)],
+              ['Ernte', plant.harvestMonths.length ? monthRangeLabel(plant.harvestMonths) : '—'],
+              ['Saattiefe', plant.sowDepth > 0 ? `${plant.sowDepth} cm` : 'Lichtkeimer'],
+              ['Wurzeltiefe', `${plant.rootDepth_cm} cm`],
+              ['Wuchshöhe', `${plant.height_cm} cm`],
+              ['Nährstoffe', FEEDERS[plant.feeder]?.de],
+              ['Reifezeit', plant.harvestWeeks > 0 ? `${plant.harvestWeeks} Wochen` : '—'],
+              ['Familie', plant.family],
+            ].map(([k, v]) => (
+              <div key={k} style={{ background:T.bg, borderRadius:10, padding:'9px 11px' }}>
+                <div style={{ ...LABEL, fontSize:8.5 }}>{k}</div>
+                <div style={{ ...MONO, fontSize:11.5, fontWeight:600, marginTop:2 }}>{v}</div>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {goodNeighbors.map(o => {
-                  const reason = companionReason(plant.id, o.id);
-                  return (
-                    <div key={o.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 5,
-                        fontSize: 12, fontWeight: 600, color: T.good,
-                        background: 'rgba(107,142,78,0.10)', borderRadius: 999,
-                        padding: '2px 9px', flexShrink: 0,
-                      }}>
-                        <span style={{ fontFamily: 'Fraunces,serif', fontStyle: 'italic' }}>{o.glyph}</span>
-                        {o.de}
-                      </span>
-                      {reason && (
-                        <span style={{ fontSize: 11, color: T.inkDim, lineHeight: 1.4, paddingTop: 2 }}>{reason}</span>
-                      )}
-                    </div>
-                  );
-                })}
+            ))}
+          </div>
+
+          <div style={{ ...LABEL, marginBottom:6 }}>Pflege</div>
+          <p style={{ fontSize:12.5, color:T.inkDim, lineHeight:1.6, marginBottom:14 }}>{plant.careNotes}</p>
+
+          {good.length > 0 && (
+            <div style={{ marginBottom:12 }}>
+              <div style={{ ...LABEL, color:T.good, marginBottom:7 }}>✓ Gute Nachbarn</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+                {good.map(o => (
+                  <div key={o.id} style={{ display:'flex', alignItems:'flex-start', gap:8, flexWrap:'wrap' }}>
+                    <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:12, fontWeight:600, color:T.good, background:T.goodBg, borderRadius:999, padding:'4px 10px', flexShrink:0 }}>
+                      <span style={{ fontFamily:"'Fraunces',serif", fontStyle:'italic' }}>{o.glyph}</span>{o.de}
+                    </span>
+                    {companionReason(plant.id, o.id) && (
+                      <span style={{ fontSize:11.5, color:T.inkDim, lineHeight:1.45, paddingTop:3 }}>{companionReason(plant.id, o.id)}</span>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {/* Bad neighbors */}
-          {badNeighbors.length > 0 && (
+          {bad.length > 0 && (
             <div>
-              <div style={{ ...MONO, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: T.bad, marginBottom: 6 }}>
-                ✗ Nicht neben
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {badNeighbors.map(o => {
-                  const reason = companionReason(plant.id, o.id);
-                  return (
-                    <div key={o.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 5,
-                        fontSize: 12, fontWeight: 600, color: T.bad,
-                        background: 'rgba(201,84,58,0.10)', borderRadius: 999,
-                        padding: '2px 9px', flexShrink: 0,
-                      }}>
-                        <span style={{ fontFamily: 'Fraunces,serif', fontStyle: 'italic' }}>{o.glyph}</span>
-                        {o.de}
-                      </span>
-                      {reason && (
-                        <span style={{ fontSize: 11, color: T.inkDim, lineHeight: 1.4, paddingTop: 2 }}>{reason}</span>
-                      )}
-                    </div>
-                  );
-                })}
+              <div style={{ ...LABEL, color:T.bad, marginBottom:7 }}>✗ Nicht daneben pflanzen</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+                {bad.map(o => (
+                  <div key={o.id} style={{ display:'flex', alignItems:'flex-start', gap:8, flexWrap:'wrap' }}>
+                    <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:12, fontWeight:600, color:T.bad, background:T.badBg, borderRadius:999, padding:'4px 10px', flexShrink:0 }}>
+                      <span style={{ fontFamily:"'Fraunces',serif", fontStyle:'italic' }}>{o.glyph}</span>{o.de}
+                    </span>
+                    {companionReason(plant.id, o.id) && (
+                      <span style={{ fontSize:11.5, color:T.inkDim, lineHeight:1.45, paddingTop:3 }}>{companionReason(plant.id, o.id)}</span>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -168,68 +163,90 @@ function PlantCard({ plant }) {
 }
 
 export default function PlantsPage() {
-  const [activeSeason, setActiveSeason] = useState('all');
+  const mobile = useBreakpoint();
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const [query, setQuery] = useState(params.get('q') || '');
+  const [filter, setFilter] = useState('all');
+  const [openId, setOpenId] = useState(null);
+  const [favs, setFavs] = useState(getFavorites);
+  const month = new Date().getMonth();
 
-  const filtered = activeSeason === 'all'
-    ? PLANTS
-    : PLANTS.filter(p => p.seasons.includes(activeSeason));
+  // Keep the URL in sync so a shared link reopens the same search.
+  useEffect(() => {
+    const next = new URLSearchParams(params);
+    if (query) next.set('q', query); else next.delete('q');
+    setParams(next, { replace:true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
+  const list = useMemo(() => {
+    let out = PLANTS;
+    if (filter === 'now') out = out.filter(p => p.sowMonths.includes(month) || p.precultureMonths.includes(month));
+    else if (filter === 'easy') out = out.filter(p => p.difficulty === 1);
+    else if (filter === 'fav') out = out.filter(p => favs.includes(p.id));
+    else if (SEASONS.some(s => s.id === filter)) out = out.filter(p => p.seasons.includes(filter));
+    return searchPlants(out, query);
+  }, [filter, query, favs, month]);
+
+  const FILTERS = [
+    { id:'all', label:`Alle (${PLANTS.length})` },
+    { id:'now', label:'Jetzt säen' },
+    { id:'easy', label:'Für Einsteiger' },
+    { id:'fav', label:`★ Favoriten${favs.length ? ` (${favs.length})` : ''}` },
+    ...SEASONS.map(s => ({ id:s.id, label:s.de })),
+  ];
 
   return (
-    <div style={{ minHeight: '100vh', background: T.bg, paddingBottom: 100 }}>
-      {/* Header */}
-      <div style={{ padding: '20px 20px 0' }}>
-        <div style={{ ...MONO, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: T.inkMute }}>
-          Pflanzenlexikon
-        </div>
-        <h1 style={{ fontFamily: 'Fraunces,serif', fontSize: 28, margin: '4px 0 0', fontWeight: 500 }}>
-          <em style={{ color: T.green, fontStyle: 'italic' }}>Pflanzen</em>
+    <div style={{
+      minHeight:'100vh', background:T.bg,
+      padding:mobile
+        ? `calc(14px + var(--safe-t)) 16px calc(var(--tabbar-h) + 16px)`
+        : '30px 28px calc(var(--tabbar-h) + 28px)',
+    }}>
+      <div style={{ maxWidth:820, margin:'0 auto' }}>
+        <div style={LABEL}>Pflanzenlexikon</div>
+        <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:mobile ? 28 : 40, margin:'6px 0 6px', fontWeight:500 }}>
+          <em style={{ color:T.green, fontStyle:'italic' }}>Pflanzen</em>
         </h1>
-        <p style={{ fontSize: 13, color: T.inkDim, margin: '6px 0 0', lineHeight: 1.5 }}>
-          Alle {PLANTS.length} Pflanzen im Planer — Tipps, Pflege & Mischkultur.
+        <p style={{ fontSize:13, color:T.inkDim, lineHeight:1.55, marginBottom:16 }}>
+          Aussaatzeiten, Pflege und Mischkultur für {PLANTS.length} Kulturen im Hochbeet.
         </p>
-      </div>
 
-      {/* Season filter pills */}
-      <div style={{ padding: '16px 16px 0', display: 'flex', gap: 6, overflowX: 'auto' }}>
-        <button
-          onClick={() => setActiveSeason('all')}
-          style={{
-            padding: '8px 14px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-            fontFamily: 'inherit', flexShrink: 0, cursor: 'pointer', transition: 'all 0.15s',
-            background: activeSeason === 'all' ? T.green : T.panel,
-            color: activeSeason === 'all' ? '#fff' : T.ink,
-            border: `1px solid ${activeSeason === 'all' ? 'transparent' : T.border}`,
-          }}
-        >
-          Alle ({PLANTS.length})
-        </button>
-        {SEASONS.map(s => {
-          const count = PLANTS.filter(p => p.seasons.includes(s.id)).length;
-          return (
-            <button
-              key={s.id}
-              onClick={() => setActiveSeason(s.id)}
-              style={{
-                padding: '8px 14px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-                fontFamily: 'inherit', flexShrink: 0, cursor: 'pointer', transition: 'all 0.15s',
-                background: activeSeason === s.id ? T.green : T.panel,
-                color: activeSeason === s.id ? '#fff' : T.ink,
-                border: `1px solid ${activeSeason === s.id ? 'transparent' : T.border}`,
-              }}
-            >
-              {s.glyph} {s.de} ({count})
-            </button>
-          );
-        })}
-      </div>
+        <div style={{ position:'sticky', top:0, zIndex:5, background:T.bg, paddingTop:6, paddingBottom:10 }}>
+          <div style={{ position:'relative', marginBottom:8 }}>
+            <span aria-hidden="true" style={{ position:'absolute', left:14, top:'50%', transform:'translateY(-50%)', color:T.inkMute, fontSize:15 }}>⌕</span>
+            <input value={query} onChange={e => setQuery(e.target.value)} type="search"
+              placeholder="Suchen — Name, Familie oder Eigenschaft" aria-label="Pflanze suchen"
+              style={{ width:'100%', padding:'13px 40px 13px 38px', borderRadius:14, border:`1px solid ${T.border}`, background:T.panel, color:T.ink, outline:'none', minHeight:48 }} />
+            {query && (
+              <button onClick={() => setQuery('')} aria-label="Suche löschen"
+                style={{ position:'absolute', right:6, top:'50%', transform:'translateY(-50%)', width:34, height:34, borderRadius:17, border:'none', background:'transparent', color:T.inkMute, fontSize:16, cursor:'pointer' }}>×</button>
+            )}
+          </div>
+          <div className="hscroll" style={{ display:'flex', gap:6 }}>
+            {FILTERS.map(f => (
+              <button key={f.id} onClick={() => setFilter(f.id)} aria-pressed={filter === f.id}
+                style={{ padding:'8px 14px', borderRadius:999, fontSize:12, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:38,
+                  background:filter === f.id ? T.green : T.panel, color:filter === f.id ? 'var(--panel)' : T.ink,
+                  border:`1px solid ${filter === f.id ? 'transparent' : T.border}` }}>{f.label}</button>
+            ))}
+          </div>
+        </div>
 
-      {/* Plant cards */}
-      <div style={{ padding: '16px 16px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {filtered.map(plant => (
-          <PlantCard key={plant.id} plant={plant} />
-        ))}
+        {list.length === 0 ? (
+          <div style={{ ...card, padding:28, textAlign:'center', color:T.inkMute, fontSize:13 }}>
+            Nichts gefunden für „{query}".
+          </div>
+        ) : (
+          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            {list.map(p => (
+              <PlantCard key={p.id} plant={p} favs={favs} setFavs={setFavs}
+                open={openId === p.id} onToggle={() => setOpenId(o => (o === p.id ? null : p.id))} />
+            ))}
+          </div>
+        )}
       </div>
-
       <TabBar active="plants" />
     </div>
   );

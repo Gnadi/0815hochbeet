@@ -1,41 +1,36 @@
-// Seeds plant + companion data to Firestore on first run.
-// Firestore structure: plants/{plantId} (fields match PLANTS array + companions map)
-// Called once from App.jsx when a user is signed in (or anonymously).
+// Mirrors the plant library into Firestore (plants/{id}) once per project, so
+// the data is available to anything else built on the same backend.
 
-import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { loadFirebase } from '../firebase';
 import { PLANTS, COMPANIONS } from './plants';
 
 let seeded = false;
 
 export async function seedPlantsToFirestore() {
-  if (seeded || !db) return;
+  if (seeded) return;
+  const fb = await loadFirebase();
+  if (!fb) return;
+  const { collection, getDocs, writeBatch, doc } = fb.storeSdk;
   try {
-    const snap = await getDocs(collection(db, 'plants'));
-    if (!snap.empty) { seeded = true; return; } // already seeded
-
-    const batch = writeBatch(db);
+    const snap = await getDocs(collection(fb.db, 'plants'));
+    if (!snap.empty) { seeded = true; return; }
+    const batch = writeBatch(fb.db);
     PLANTS.forEach(plant => {
-      const ref = doc(db, 'plants', plant.id);
-      batch.set(ref, {
-        ...plant,
-        companions: COMPANIONS[plant.id] || {},
-      });
+      batch.set(doc(fb.db, 'plants', plant.id), { ...plant, companions: COMPANIONS[plant.id] || {} });
     });
     await batch.commit();
     seeded = true;
-  } catch (e) {
-    // Firestore not configured — app works with local data
+  } catch {
+    // Firestore unavailable or rules deny writes — the app runs on local data.
   }
 }
 
-// Load plants from Firestore (falls back to local PLANTS if unavailable)
 export async function loadPlantsFromFirestore() {
-  if (!db) return null;
+  const fb = await loadFirebase();
+  if (!fb) return null;
   try {
-    const snap = await getDocs(collection(db, 'plants'));
-    if (snap.empty) return null;
-    return snap.docs.map(d => d.data());
+    const snap = await fb.storeSdk.getDocs(fb.storeSdk.collection(fb.db, 'plants'));
+    return snap.empty ? null : snap.docs.map(d => d.data());
   } catch {
     return null;
   }

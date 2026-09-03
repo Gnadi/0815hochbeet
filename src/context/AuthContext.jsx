@@ -1,29 +1,48 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile } from 'firebase/auth';
-import { auth } from '../firebase';
+import { isFirebaseConfigured, loadFirebase } from '../firebase';
 
 const Ctx = createContext(null);
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(undefined); // undefined = loading
+  // undefined = still resolving, null = signed out.
+  const [user, setUser] = useState(() => (isFirebaseConfigured() ? undefined : null));
 
   useEffect(() => {
-    if (!auth) { setUser(null); return; }
-    return onAuthStateChanged(auth, u => setUser(u ?? null));
+    if (!isFirebaseConfigured()) return;
+    let unsub = () => {};
+    let alive = true;
+    loadFirebase().then(fb => {
+      if (!alive) return;
+      if (!fb) { setUser(null); return; }
+      unsub = fb.authSdk.onAuthStateChanged(fb.auth, u => setUser(u ?? null));
+    });
+    return () => { alive = false; unsub(); };
   }, []);
 
-  const login = (email, pw) => {
-    if (!auth) return Promise.reject(new Error('Firebase not configured'));
-    return signInWithEmailAndPassword(auth, email, pw);
-  };
-  const register = (email, pw, name) => {
-    if (!auth) return Promise.reject(new Error('Firebase not configured'));
-    return createUserWithEmailAndPassword(auth, email, pw).then(r => updateProfile(r.user, { displayName: name }));
-  };
-  const logout = () => {
-    if (!auth) return Promise.resolve();
-    return signOut(auth);
-  };
+  async function login(email, pw) {
+    const fb = await loadFirebase();
+    if (!fb) throw new Error('Firebase ist nicht konfiguriert.');
+    return fb.authSdk.signInWithEmailAndPassword(fb.auth, email, pw);
+  }
 
-  return <Ctx.Provider value={{ user, login, register, logout }}>{children}</Ctx.Provider>;
+  async function register(email, pw, name) {
+    const fb = await loadFirebase();
+    if (!fb) throw new Error('Firebase ist nicht konfiguriert.');
+    const res = await fb.authSdk.createUserWithEmailAndPassword(fb.auth, email, pw);
+    await fb.authSdk.updateProfile(res.user, { displayName: name });
+    return res;
+  }
+
+  async function logout() {
+    const fb = await loadFirebase();
+    if (fb) await fb.authSdk.signOut(fb.auth);
+  }
+
+  return (
+    <Ctx.Provider value={{ user, login, register, logout, syncAvailable: isFirebaseConfigured() }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
+
 export const useAuth = () => useContext(Ctx);

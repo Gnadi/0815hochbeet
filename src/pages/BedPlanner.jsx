@@ -171,6 +171,22 @@ function Planner({ record, mobile, navigate, toast }) {
     () => [...new Set(Object.values(bed.cells).filter(v => v && typeof v === 'object').map(v => v.plantId))],
     [bed.cells],
   );
+  /**
+   * Legend for the canvas. Densely spaced crops are drawn as plain dots — too
+   * small to carry a label — so the bed needs somewhere to say what they are.
+   */
+  const legend = useMemo(() => {
+    const byPlant = new Map();
+    for (const item of Object.values(bed.cells)) {
+      if (!item || typeof item !== 'object') continue;
+      byPlant.set(item.plantId, (byPlant.get(item.plantId) || 0) + (item.count || 1));
+    }
+    return [...byPlant.entries()]
+      .map(([id, count]) => ({ plant: plantById(id), count }))
+      .filter(e => e.plant)
+      .sort((a, b) => b.count - a.count);
+  }, [bed.cells]);
+
   const selected = bed.selectedKey ? bed.cells[bed.selectedKey] : null;
   const selectedPlant = selected ? plantById(selected.plantId) : null;
   const rotation = useMemo(() => getRotationAnalysis(bed.seasonCells), [bed.seasonCells]);
@@ -559,6 +575,28 @@ function Planner({ record, mobile, navigate, toast }) {
     </div>
   );
 
+  const legendRow = legend.length > 0 && (
+    <div className="hscroll" style={{ display:'flex', gap:6, paddingBottom:2 }}>
+      {legend.map(({ plant, count }) => (
+        <button key={plant.id} onClick={() => { setInspect(plant.id); setSheet('plant'); }}
+          title={`${plant.de} — ${plant.spacing_cm} cm Abstand`}
+          style={{
+            display:'inline-flex', alignItems:'center', gap:7, flexShrink:0,
+            padding:'7px 12px', borderRadius:999, minHeight:38, cursor:'pointer',
+            background:T.panel, border:`1px solid ${T.border}`, color:T.ink,
+            fontFamily:'inherit', fontSize:12, fontWeight:600,
+          }}>
+          <span aria-hidden="true" style={{
+            width:13, height:13, borderRadius:7, flexShrink:0,
+            background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${plant.hue}), oklch(0.50 0.15 ${plant.hue}))`,
+          }} />
+          {plant.de}
+          <span style={{ ...MONO, fontSize:10, color:T.inkMute, fontWeight:500 }}>×{count}</span>
+        </button>
+      ))}
+    </div>
+  );
+
   const canvas = (
     <BedCanvas
       bed={bed}
@@ -735,6 +773,7 @@ function Planner({ record, mobile, navigate, toast }) {
       <div style={{ padding:'12px 14px 0' }}>{seasonRail}</div>
       <div style={{ padding:'12px 14px 0' }}>{statsRow}</div>
       <div style={{ padding:'14px 14px 0' }}>{canvas}</div>
+      {legendRow && <div style={{ padding:'10px 14px 0' }}>{legendRow}</div>}
       <div style={{ padding:'10px 14px 0', display:'flex', flexDirection:'column', gap:10 }}>
         {selectionBar}
         {emptySeasonCta}
@@ -784,6 +823,7 @@ function Planner({ record, mobile, navigate, toast }) {
         <div style={{ marginBottom:14 }}>{seasonRail}</div>
         <div style={{ marginBottom:16 }}>{statsRow}</div>
         {canvas}
+        {legendRow && <div style={{ marginTop:12 }}>{legendRow}</div>}
         <div style={{ marginTop:12, display:'flex', flexDirection:'column', gap:10 }}>
           {selectionBar}
           {emptySeasonCta}

@@ -8,8 +8,11 @@ automatisch im Griff behalten — auf dem Handy, auch ohne Empfang im Garten.
 ## Was die App kann
 
 **Beet planen.** Die Beetfläche wird in echten Zentimetern gezeichnet. Jede
-Pflanze belegt genau ihren Pflanzabstand, also sieht man sofort, ob noch etwas
-dazwischenpasst. Auf dem Handy: antippen zum Setzen, antippen zum Auswählen,
+Pflanze belegt auf dem Bildschirm genau die Fläche, die sie im Beet
+beansprucht — nichts wird für die Bedienbarkeit größer gezeichnet, als es ist,
+also sieht man sofort, ob noch etwas dazwischenpasst. Eng gesäte Kulturen wie
+Karotten erscheinen als dichtes Feld kleiner Punkte; die Legende unter dem Beet
+sagt, was da wächst. Auf dem Handy: antippen zum Setzen, antippen zum Auswählen,
 ziehen zum Verschieben, mit zwei Fingern zoomen.
 
 **Mischkultur prüfen.** Gute und schlechte Nachbarn werden live markiert und

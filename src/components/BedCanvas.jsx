@@ -2,8 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { T } from '../theme';
 import { SNAP_CM, plantById } from '../data/plants';
 
-/** Smallest on-screen marker, so a 5 cm radish is still tappable. */
-const MIN_MARKER = 30;
+/**
+ * Smallest comfortable tap target, in screen pixels. It applies to the
+ * invisible hit area only — never to the drawn circle. Inflating the drawing
+ * turned a dense carrot row (5 cm spacing) into an unreadable smear, because
+ * every circle was painted 60 % wider than the gap it actually sits in.
+ */
+const MIN_HIT = 30;
+/**
+ * Above these on-screen diameters a circle can carry its initial, then its
+ * name. Below the first, an italic serif capital is just a smudge — a block of
+ * 5 cm carrots reads far better as plain dots, with the legend naming them.
+ */
+const GLYPH_AT = 24;
+const LABEL_AT = 54;
 const MAX_ZOOM = 5;
 const TAP_SLOP = 9;
 
@@ -326,67 +338,102 @@ export function BedCanvas({
           {items.map(([key, item]) => {
             const p = plantById(item.plantId);
             if (!p) return null;
-            const footprint = p.spacing_cm * base;
-            const marker = Math.max(MIN_MARKER / zoom, footprint);
+
+            // Drawn at its true footprint, always: the circle on screen is the
+            // room the plant actually claims in the bed. Only the hit area is
+            // padded out to something a finger can find, and never so far that
+            // it swallows a neighbour.
+            const drawn = p.spacing_cm * base;
+            const onScreen = drawn * zoom;
+            const hit = readOnly ? drawn : Math.max(drawn, Math.min(MIN_HIT / zoom, drawn * 1.8));
+
             const cx = item.x * base;
             const cy = item.y * base;
             const status = showConflict ? plantStatus?.[key] : null;
-            const ring = status?.status === 'bad' ? T.bad : status?.status === 'good' ? T.good : null;
+            // A conflict is actionable and always gets its ring. "Good
+            // neighbour" is a confirmation, and on a dense row of 5 cm carrots
+            // 48 touching green rings merge into a mesh that hides the bed —
+            // so it is only drawn where there is room for it to read as a ring.
+            const ring = status?.status === 'bad' ? T.bad
+              : (status?.status === 'good' && onScreen >= 26) ? T.good
+              : null;
             const isSelected = selectedKey === key;
             const isDragging = dragKey === key;
             const count = item.count || 1;
 
+            // A drop shadow under every circle is what turns a tight row to
+            // mud; small circles get a crisp rim instead so they stay apart.
+            const rim = `inset 0 0 0 ${Math.max(0.5, onScreen * 0.05) / zoom}px rgba(255,255,255,0.5)`;
+            const lift = onScreen > 26 ? `, 0 3px 10px -2px rgba(0,0,0,${ring ? 0.35 : 0.3})` : '';
+            // Ring widths scale with the circle: a fixed 4 px halo swallowed a
+            // 15 px carrot whole, hiding the very plant it was pointing at.
+            const selW = Math.min(2.5, Math.max(1, onScreen * 0.13)) / zoom;
+            const statusW = Math.min(2, Math.max(0.8, onScreen * 0.1)) / zoom;
+            // Green hugs the circle, the light halo sits outside it. The other
+            // way round, the halo covered a 15 px carrot's own colour.
+            const shadow = isSelected
+              ? `0 0 0 ${selW}px ${T.green}, 0 0 0 ${selW * 2}px var(--panel), 0 4px 14px -2px rgba(0,0,0,0.45)`
+              : ring
+                ? `0 0 0 ${statusW}px ${ring}${lift}`
+                : `${rim}${lift}`;
+
             return (
-              <div key={key} data-cell-key={key} style={{ position:'absolute', left:cx, top:cy, width:0, height:0 }}>
-                {/* True-to-scale footprint so spacing stays honest at any zoom */}
-                {footprint > 6 && (
+              <div key={key} style={{ position:'absolute', left:cx, top:cy, width:0, height:0 }}>
+                {/* The selected plant shows the space it claims, so the
+                    gardener can see why nothing else fits beside it. */}
+                {isSelected && drawn > 8 && (
                   <div aria-hidden="true" style={{
-                    position:'absolute', left:-footprint / 2, top:-footprint / 2,
-                    width:footprint, height:footprint, borderRadius:'50%',
-                    border:`1px dashed oklch(0.72 0.08 ${p.hue} / 0.5)`,
-                    background:`oklch(0.75 0.09 ${p.hue} / 0.13)`,
+                    position:'absolute', left:-drawn * 0.9, top:-drawn * 0.9,
+                    width:drawn * 1.8, height:drawn * 1.8, borderRadius:'50%',
+                    border:`${1 / zoom}px dashed oklch(0.70 0.09 ${p.hue} / 0.65)`,
                     pointerEvents:'none',
                   }} />
                 )}
+
+                {/* Invisible, finger-sized hit area */}
                 <div
+                  data-cell-key={key}
                   title={`${p.de}${count > 1 ? ` ×${count}` : ''}`}
                   style={{
-                    position:'absolute', left:-marker / 2, top:-marker / 2,
-                    width:marker, height:marker, borderRadius:'50%',
-                    background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`,
-                    boxShadow: isSelected
-                      ? `0 0 0 ${3 / zoom}px var(--panel), 0 0 0 ${5 / zoom}px ${T.green}, 0 4px 14px -2px rgba(0,0,0,0.45)`
-                      : ring
-                        ? `0 0 0 ${2.5 / zoom}px ${ring}, 0 3px 10px -2px rgba(0,0,0,0.35)`
-                        : '0 3px 10px -2px rgba(0,0,0,0.3)',
-                    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                    opacity: isDragging ? 0.28 : 1,
-                    transition:'opacity 0.12s, box-shadow 0.15s',
+                    position:'absolute', left:-hit / 2, top:-hit / 2,
+                    width:hit, height:hit, borderRadius:'50%',
+                    display:'flex', alignItems:'center', justifyContent:'center',
                     cursor: readOnly ? 'default' : 'grab',
                     pointerEvents: readOnly ? 'none' : 'auto',
                   }}
                 >
-                  {marker * zoom > 20 && (
-                    <span style={{ fontSize:Math.min(marker * 0.4, 26 / zoom), fontFamily:"'Fraunces',serif", fontStyle:'italic', color:'rgba(255,255,255,0.96)', lineHeight:1, pointerEvents:'none' }}>
-                      {p.glyph[0]}
-                    </span>
-                  )}
-                  {marker * zoom > 52 && (
-                    <span style={{ fontSize:Math.min(marker * 0.14, 12 / zoom), color:'rgba(255,255,255,0.9)', fontWeight:600, pointerEvents:'none', marginTop:1 }}>
-                      {p.de}
-                    </span>
-                  )}
-                  {count > 1 && (
-                    <span style={{
-                      position:'absolute', bottom:-2 / zoom, right:-2 / zoom,
-                      background:'var(--ink)', color:'var(--bg)',
-                      fontFamily:"'JetBrains Mono',monospace",
-                      fontSize:Math.max(7, Math.min(11, marker * 0.26)),
-                      borderRadius:999, padding:`${1 / zoom}px ${4 / zoom}px`,
-                      lineHeight:1.4, pointerEvents:'none',
-                      border:`${1 / zoom}px solid var(--panel)`,
-                    }}>×{count}</span>
-                  )}
+                  {/* The visible plant */}
+                  <div style={{
+                    width:drawn, height:drawn, borderRadius:'50%',
+                    background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${p.hue}), oklch(0.50 0.15 ${p.hue}))`,
+                    boxShadow:shadow,
+                    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                    opacity: isDragging ? 0.28 : 1,
+                    transition:'opacity 0.12s, box-shadow 0.15s',
+                    pointerEvents:'none', position:'relative',
+                  }}>
+                    {onScreen > GLYPH_AT && (
+                      <span style={{ fontSize:Math.min(drawn * 0.42, 26 / zoom), fontFamily:"'Fraunces',serif", fontStyle:'italic', color:'rgba(255,255,255,0.96)', lineHeight:1 }}>
+                        {p.glyph[0]}
+                      </span>
+                    )}
+                    {onScreen > LABEL_AT && (
+                      <span style={{ fontSize:Math.min(drawn * 0.14, 12 / zoom), color:'rgba(255,255,255,0.9)', fontWeight:600, marginTop:1 }}>
+                        {p.de}
+                      </span>
+                    )}
+                    {count > 1 && onScreen > 26 && (
+                      <span style={{
+                        position:'absolute', bottom:-2 / zoom, right:-2 / zoom,
+                        background:'var(--ink)', color:'var(--bg)',
+                        fontFamily:"'JetBrains Mono',monospace",
+                        fontSize:Math.max(7, Math.min(11, drawn * 0.26)),
+                        borderRadius:999, padding:`${1 / zoom}px ${4 / zoom}px`,
+                        lineHeight:1.4,
+                        border:`${1 / zoom}px solid var(--panel)`,
+                      }}>×{count}</span>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -394,7 +441,7 @@ export function BedCanvas({
 
           {/* Placement / move ghost */}
           {ghostPlant && (() => {
-            const d = Math.max(MIN_MARKER / zoom, ghostPlant.spacing_cm * base);
+            const d = Math.max(14 / zoom, ghostPlant.spacing_cm * base);
             return (
               <div aria-hidden="true" style={{
                 position:'absolute', pointerEvents:'none',

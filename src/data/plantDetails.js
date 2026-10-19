@@ -61,6 +61,23 @@ export const PLANT_DETAILS = {
   thyme:      { precultureMonths:[2,3],  sowMonths:[4,5],         harvestMonths:[4,5,6,7,8,9],    feeder:'light',  rootDepth_cm:20, height_cm:25,  difficulty:1, frostHardy:true,  perennial:true,  tags:['kräuter','mehrjährig','bienen'], aka:['Quendel'] },
 };
 
+/**
+ * How many weeks a crop keeps occupying its spot once it is ripe. One-off
+ * harvests (Radieschen, Karfiol) clear the spot quickly; continuous croppers
+ * (Paradeiser, Mangold) stay until the frost. Drives a planting's default end
+ * date on the bed's timeline. Anything not listed: 3 weeks.
+ */
+export const HARVEST_SPAN_WEEKS = {
+  tomato:10, cucumber:8, zucchini:10, pepper:10, eggplant:8, bean:4, polebean:8,
+  chard:16, kale:16, brussels:12, leek:14, parsley:16, basil:10, broccoli:6,
+  carrot:6, beetroot:6, celeriac:6, parsnip:16, lambslettuce:16, rucola:4,
+  pea:4, dill:8, nasturtium:10, borage:10, radish:2, onion:2, garlic:2,
+  cauliflower:2, pumpkin:4, cabbage:4,
+};
+
+/** Crops that bolt (schießen) or turn bitter in a heat wave. */
+export const BOLTS_IN_HEAT = ['lettuce', 'spinach', 'rucola', 'radish', 'cauliflower', 'fennel', 'lambslettuce'];
+
 export const MONTHS_DE       = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
 export const MONTHS_DE_SHORT = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 

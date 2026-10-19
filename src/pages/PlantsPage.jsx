@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { LABEL, MONO, T } from '../theme';
 import {
   DIFFICULTY_DE, PLANTS, SEASONS, SUN_DE, SUN_ICON, WATER_ICON,
@@ -167,7 +167,6 @@ function PlantCard({ plant, open, onToggle, favs, setFavs }) {
 
 export default function PlantsPage() {
   const mobile = useBreakpoint();
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState(params.get('q') || '');
   const [filter, setFilter] = useState('all');

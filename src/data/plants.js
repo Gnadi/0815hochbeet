@@ -1,5 +1,5 @@
 // Plant library — research-based companion planting data for Central Europe
-import { PLANT_DETAILS, FEEDERS } from './plantDetails.js';
+import { PLANT_DETAILS, FEEDERS, HARVEST_SPAN_WEEKS, BOLTS_IN_HEAT } from './plantDetails.js';
 
 export const SNAP_CM = 5;
 // Sources: Gertrud Franck "Mischkulturen im Gemüsegarten", DGG,
@@ -59,6 +59,8 @@ export const PLANTS = BASE_PLANTS.map(p => ({
   difficulty: 1, frostHardy: false, perennial: false, tags: [], aka: [],
   ...p,
   ...(PLANT_DETAILS[p.id] || {}),
+  harvestSpanWeeks: HARVEST_SPAN_WEEKS[p.id] ?? 3,
+  boltsInHeat: BOLTS_IN_HEAT.includes(p.id),
 }));
 
 export { FEEDERS };

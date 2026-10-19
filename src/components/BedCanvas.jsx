@@ -43,6 +43,7 @@ export function BedCanvas({
   showSun = false,
   readOnly = false,
   height,
+  upcoming = [],
 }) {
   const { cells, plantStatus, bedWidth, bedDepth } = bed;
   const bw = bedWidth || 120;
@@ -73,7 +74,6 @@ export function BedCanvas({
   const base = vw > 0 ? vw / bw : 0;          // px per cm at zoom 1
   const stageW = vw;
   const stageH = base * bh;
-  const scale = base * zoom;                   // px per cm on screen
 
   const clampPan = useCallback((p, z) => ({
     x: stageW * z <= stageW ? 0 : clamp(p.x, stageW - stageW * z, 0),
@@ -333,6 +333,20 @@ export function BedCanvas({
               {grid}
             </svg>
           )}
+
+          {/* Nachkultur: what goes on a spot later, as a faint dashed outline. */}
+          {upcoming.map(item => {
+            const p = plantById(item.plantId);
+            if (!p) return null;
+            const d = p.spacing_cm * base;
+            return (
+              <div key={`next-${item.id}`} aria-hidden="true" style={{
+                position:'absolute', left:item.x * base - d / 2, top:item.y * base - d / 2,
+                width:d, height:d, borderRadius:'50%', pointerEvents:'none',
+                border:`${1.2 / zoom}px dashed oklch(0.85 0.08 ${p.hue} / 0.7)`,
+              }} />
+            );
+          })}
 
           {/* Plants */}
           {items.map(([key, item]) => {

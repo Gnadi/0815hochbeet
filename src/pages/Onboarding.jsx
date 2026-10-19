@@ -24,7 +24,7 @@ const field = {
 };
 
 export default function Onboarding() {
-  const { user } = useAuth();
+  const { user, syncAvailable } = useAuth();
   const navigate = useNavigate();
   const mobile = useBreakpoint();
   const beds = useBeds();
@@ -218,7 +218,7 @@ export default function Onboarding() {
         </div>
       )}
 
-      {!user && (
+      {!user && syncAvailable && (
         <div style={{ marginTop:16, textAlign:'center' }}>
           <button onClick={() => setShowAuth(true)}
             style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontSize:12.5, fontFamily:'inherit', textDecoration:'underline', minHeight:44, padding:'0 8px' }}>

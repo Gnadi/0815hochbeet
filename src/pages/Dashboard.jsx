@@ -61,7 +61,7 @@ function TaskRow({ task, onToggle, bedName }) {
 }
 
 export default function Dashboard() {
-  const { user, logout } = useAuth();
+  const { user, logout, syncAvailable } = useAuth();
   const navigate = useNavigate();
   const mobile = useBreakpoint();
   const beds = useBeds();
@@ -251,6 +251,12 @@ export default function Dashboard() {
                 <Btn size="sm" onClick={async () => { await pushAllToRemote(); toast({ message:'Alle Beete hochgeladen', tone:'good' }); }}>↑ Jetzt sichern</Btn>
                 <Btn size="sm" variant="quiet" onClick={() => { logout(); setSettingsOpen(false); }}>Abmelden</Btn>
               </div>
+            </div>
+          ) : !syncAvailable ? (
+            // Without a Firebase project there is nothing to sign in to — say
+            // so instead of offering a login that can only fail.
+            <div style={{ ...card, fontSize:13, color:T.inkDim, lineHeight:1.55 }}>
+              Diese Installation läuft ohne Cloud-Sync. Deine Beete, Aufgaben und Ernten sind in diesem Browser gespeichert.
             </div>
           ) : (
             <div style={{ ...card }}>

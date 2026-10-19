@@ -1,8 +1,8 @@
 import { plantById } from '../data/plants';
 
-const FROST_SENSITIVE = new Set(['tomato', 'basil', 'cucumber', 'bean', 'zucchini', 'pepper']);
-const HEAT_SENSITIVE  = new Set(['lettuce', 'spinach', 'rucola', 'radish']);
-const WATER_HUNGRY    = new Set(['tomato', 'cucumber', 'zucchini']);
+const FROST_SENSITIVE = new Set(['tomato', 'basil', 'cucumber', 'bean', 'zucchini', 'pepper', 'pumpkin', 'polebean', 'eggplant', 'corn', 'nasturtium']);
+const HEAT_SENSITIVE  = new Set(['lettuce', 'spinach', 'rucola', 'radish', 'cauliflower']);
+const WATER_HUNGRY    = new Set(['tomato', 'cucumber', 'zucchini', 'pumpkin', 'cabbage', 'cauliflower', 'celeriac']);
 
 export function getWeatherAdvice(forecast, plantedIds = []) {
   if (!forecast?.list?.length) return [];

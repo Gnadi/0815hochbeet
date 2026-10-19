@@ -1,4 +1,4 @@
-// Mirrors the plant library into Firestore (plants/{id}) once per project, so
+// Mirrors the plant library into Firestore (plants/{id}), so
 // the data is available to anything else built on the same backend.
 
 import { loadFirebase } from '../firebase';
@@ -13,9 +13,13 @@ export async function seedPlantsToFirestore() {
   const { collection, getDocs, writeBatch, doc } = fb.storeSdk;
   try {
     const snap = await getDocs(collection(fb.db, 'plants'));
-    if (!snap.empty) { seeded = true; return; }
+    // Only write what is missing, so plants added to the library later still
+    // reach a project that was seeded with an older list.
+    const known = new Set(snap.docs.map(d => d.id));
+    const missing = PLANTS.filter(p => !known.has(p.id));
+    if (!missing.length) { seeded = true; return; }
     const batch = writeBatch(fb.db);
-    PLANTS.forEach(plant => {
+    missing.forEach(plant => {
       batch.set(doc(fb.db, 'plants', plant.id), { ...plant, companions: COMPANIONS[plant.id] || {} });
     });
     await batch.commit();

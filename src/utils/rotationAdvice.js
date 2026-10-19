@@ -11,6 +11,10 @@ const FAMILY_DE = {
   Cucurbitaceae:  'Kürbisgewächse',
   Chenopodiaceae: 'Gänsefußgewächse',
   Rosaceae:       'Rosengewächse',
+  Poaceae:        'Süßgräser',
+  Caprifoliaceae: 'Baldriangewächse',
+  Tropaeolaceae:  'Kapuzinerkressengewächse',
+  Boraginaceae:   'Raublattgewächse',
 };
 
 const SEASON_DE = { spring:'Frühling', summer:'Sommer', autumn:'Herbst', winter:'Winter' };
@@ -20,6 +24,8 @@ const ROTATION_TIPS = {
   Brassicaceae:  'Kohl mindestens 3 Jahre Pause an derselben Stelle — Clubroot-Gefahr.',
   Cucurbitaceae: 'Kürbisgewächse stark zehrend — danach Hülsenfrüchter zum Stickstoffaufbau.',
   Fabaceae:      'Prima Vorfrucht! Stickstoffknöllchen im Boden lassen — Nachfolger profitiert.',
+  Chenopodiaceae:'Mangold, Rote Rübe und Spinat sind eng verwandt — nicht direkt nacheinander anbauen.',
+  Apiaceae:      'Karotte, Sellerie, Pastinake und Fenchel teilen die Möhrenfliege — 3–4 Jahre Abstand halten.',
 };
 
 export function familyDe(family) {

@@ -67,6 +67,9 @@ function PlantCard({ plant, open, onToggle, favs, setFavs }) {
             <span style={{ fontFamily:"'Fraunces',serif", fontSize:18, fontWeight:500 }}>{plant.de}</span>
             <span style={{ color:T.inkMute, fontSize:13, flexShrink:0 }}>{open ? '▲' : '▼'}</span>
           </span>
+          {plant.aka.length > 0 && (
+            <span style={{ display:'block', fontSize:12, color:T.inkDim, marginTop:1 }}>auch: {plant.aka.join(', ')}</span>
+          )}
           <span style={{ ...MONO, display:'flex', gap:9, marginTop:4, flexWrap:'wrap', fontSize:10, color:T.inkDim }}>
             <span>{SUN_ICON[plant.sun]} {SUN_DE[plant.sun]}</span>
             <span>{WATER_ICON[plant.water]}</span>

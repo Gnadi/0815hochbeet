@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { LABEL, MONO, T } from '../theme';
-import { DIFFICULTY_DE, SEASONS, SUN_DE, WATER_DE, companionReason, plantById } from '../data/plants';
-import { FEEDERS, monthRangeLabel } from '../data/plantDetails';
-import { deleteBed as removeBed, duplicateBed, saveBed } from '../lib/beds';
+import { DIFFICULTY_DE, SUN_DE, WATER_DE, companionReason, plantById } from '../data/plants';
+import { FEEDERS, MONTHS_DE, MONTHS_DE_SHORT, monthRangeLabel } from '../data/plantDetails';
+import { deleteBed as removeBed, duplicateBed, getBedView, saveBed, setBedView } from '../lib/beds';
+import { daysBetween, formatRange, parseDate, toDateStr } from '../lib/timeline';
+import { ageAdvice, bedAge, feederMismatches } from '../utils/bedAge';
 import { useBedRecord } from '../hooks/useBeds';
 import { useBed } from '../hooks/useBed';
 import { useBreakpoint } from '../hooks/useBreakpoint';
@@ -13,6 +15,7 @@ import { getRotationAnalysis } from '../utils/rotationAdvice';
 import { TASK_KINDS } from '../utils/taskEngine';
 import { BedCanvas } from '../components/BedCanvas';
 import { PlantPicker } from '../components/PlantPicker';
+import { Timeline } from '../components/Timeline';
 import { Sheet } from '../components/Sheet';
 import { TabBar } from '../components/TabBar';
 import { Btn, IconBtn, TrashIcon } from '../components/Btn';
@@ -21,16 +24,11 @@ import { haptic, useToast } from '../components/Toast';
 
 const card = { background:T.panel, border:`1px solid ${T.border}`, borderRadius:16, padding:14 };
 
-const SEASON_ORDER = ['spring', 'summer', 'autumn', 'winter'];
-
-/** Order-independent fingerprint of a whole year's plantings. */
-function seasonCellsSig(seasonCells = {}) {
-  return SEASON_ORDER.map(season => {
-    const cells = seasonCells[season] || {};
-    return Object.keys(cells).sort()
-      .map(k => `${k}:${cells[k]?.plantId}:${cells[k]?.count || 1}`)
-      .join(',');
-  }).join('|');
+/** Order-independent fingerprint of all plantings. */
+function plantingsSig(plantings = {}) {
+  return Object.keys(plantings).sort()
+    .map(k => { const p = plantings[k]; return `${k}:${p.plantId}:${p.x}:${p.y}:${p.count || 1}:${p.start}:${p.end}`; })
+    .join(',');
 }
 const field = {
   width:'100%', padding:'12px 14px', borderRadius:12,
@@ -111,11 +109,10 @@ export default function BedPlanner() {
 function Planner({ record, mobile, navigate, toast }) {
   const bedId = record.id;
   const bed = useBed({
-    bedId,
     width: record.width,
     depth: record.depth,
-    initialSeason: record.season,
-    initialSeasonCells: record.seasonCells,
+    initialPlantings: record.plantings,
+    initialView: getBedView(bedId),
   });
 
   const { addEntry: addHarvest, deleteEntry: deleteHarvest, entriesForBed } = useHarvestLog();
@@ -130,6 +127,7 @@ function Planner({ record, mobile, navigate, toast }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [harvestPlant, setHarvestPlant] = useState('');
   const [harvestAmount, setHarvestAmount] = useState('');
+  const [dateDraft, setDateDraft] = useState(null);    // { key, start, end } for the dates sheet
 
   // ── Persistence ──────────────────────────────────────────────────────────
   //
@@ -141,23 +139,23 @@ function Planner({ record, mobile, navigate, toast }) {
   const syncedSig = useRef(null);
 
   useEffect(() => {
-    const sig = seasonCellsSig(bed.seasonCells);
+    const sig = plantingsSig(bed.plantings);
     if (syncedSig.current === null) { syncedSig.current = sig; return; }  // hydrate render
-    if (sig === syncedSig.current) {
-      saveBed(bedId, { season: bed.season });
-      return;
-    }
+    if (sig === syncedSig.current) return;
     syncedSig.current = sig;
-    saveBed(bedId, { seasonCells: bed.seasonCells, season: bed.season });
-  }, [bed.seasonCells, bed.season, bedId]);
+    saveBed(bedId, { plantings: bed.plantings });
+  }, [bed.plantings, bedId]);
 
   useEffect(() => {
-    const sig = seasonCellsSig(record.seasonCells);
+    const sig = plantingsSig(record.plantings);
     if (syncedSig.current === null || sig === syncedSig.current) return;
     syncedSig.current = sig;
-    bed.loadSeasonCells(record.seasonCells);
+    bed.loadPlantings(record.plantings);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [record.seasonCells]);
+  }, [record.plantings]);
+
+  // The month on screen is a per-device preference, not an edit of the bed.
+  useEffect(() => { setBedView(bedId, bed.view); }, [bedId, bed.view]);
 
   const notesTimer = useRef(null);
   function changeNotes(v) {
@@ -189,11 +187,18 @@ function Planner({ record, mobile, navigate, toast }) {
 
   const selected = bed.selectedKey ? bed.cells[bed.selectedKey] : null;
   const selectedPlant = selected ? plantById(selected.plantId) : null;
-  const rotation = useMemo(() => getRotationAnalysis(bed.seasonCells), [bed.seasonCells]);
+  const rotation = useMemo(() => getRotationAnalysis(bed.plantings, bed.view.year), [bed.plantings, bed.view.year]);
+  const age = bedAge(record, bed.view.year);
+  const advice = ageAdvice(age);
+  const feederIssues = useMemo(
+    () => feederMismatches(placedIds.map(plantById).filter(Boolean), age),
+    [placedIds, age],
+  );
+  const monthLabel = `${MONTHS_DE[bed.view.month]} ${bed.view.year}`;
   const issueGroups = useMemo(() => groupPairs(bed.issues), [bed.issues]);
   const winGroups = useMemo(() => groupPairs(bed.wins), [bed.wins]);
   const bedTasks = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = toDateStr(new Date());
     return todos.filter(t => t.bedId === bedId && t.date >= today).slice(0, 12);
   }, [todos, bedId]);
   const harvests = entriesForBed(bedId);
@@ -206,8 +211,20 @@ function Planner({ record, mobile, navigate, toast }) {
   // ── Actions ──────────────────────────────────────────────────────────────
   function handlePlace(x, y, plantId) {
     const res = bed.place(x, y, plantId);
-    if (res === 'placed' || res === 'stacked') haptic(8);
-    return res;
+    if (res.status === 'blocked') {
+      const b = res.blockers?.find(x => !(x.start <= bed.onDate && bed.onDate <= x.end));
+      if (b) {
+        haptic([14, 40, 14]);
+        toast({ message:`Dort steht ${formatRange(b)} ${plantById(b.plantId)?.de} — zu wenig Zeit dazwischen.`, tone:'bad', duration:3200 });
+        return 'handled';
+      }
+      return 'blocked';
+    }
+    haptic(8);
+    if (res.adjusted) {
+      toast({ message:`${plantById(plantId)?.de}: ${formatRange(res.planting)} — passt zwischen Vor- und Nachkultur.`, tone:'good', duration:3200 });
+    }
+    return res.status;
   }
 
   function handleBlocked(kind) {
@@ -240,21 +257,54 @@ function Planner({ record, mobile, navigate, toast }) {
   }
 
   function handleClear() {
-    if (!Object.keys(bed.cells).length) return;
-    bed.clearSeason();
-    toast({ message:`${SEASONS.find(s => s.id === bed.season)?.de} geleert`, action: () => bed.undo() });
+    const n = bed.clearView();
+    if (n) toast({ message:`${n} Pflanzung${n > 1 ? 'en' : ''} aus ${monthLabel} entfernt`, action: () => bed.undo() });
+  }
+
+  function openDates(key) {
+    const p = bed.plantings[key];
+    if (!p) return;
+    setDateDraft({ key, start:p.start, end:p.end });
+    setSheet('dates');
+  }
+
+  function saveDates() {
+    const res = bed.setRange(dateDraft.key, dateDraft.start, dateDraft.end);
+    if (res.ok) {
+      const d = parseDate(dateDraft.start);
+      // Jump to the planting if it no longer stands in the month on screen.
+      if (!(dateDraft.start <= bed.onDate && bed.onDate <= dateDraft.end)) {
+        bed.setView({ year:d.getFullYear(), month:d.getMonth() });
+      }
+      setSheet(null);
+      toast({ message:'Zeitraum gespeichert', tone:'good', duration:1800, action: () => bed.undo() });
+      return;
+    }
+    const b = res.blockers?.[0];
+    toast({
+      message: res.reason === 'order' ? 'Das Ende liegt vor dem Beginn.'
+        : `Überschneidet sich mit ${plantById(b?.plantId)?.de} (${b ? formatRange(b) : ''}) am selben Platz.`,
+      tone:'bad', duration:3200,
+    });
+  }
+
+  function markRefilled() {
+    const y = new Date().getFullYear();
+    saveBed(bedId, { filledYear:y });
+    setDraft(d => (d ? { ...d, filledYear:y } : d));
+    toast({ message:`Befüllungsjahr auf ${y} gesetzt — wieder Starkzehrer-Zeit.`, tone:'good' });
   }
 
   /**
-   * Hands the current bed and season to the generator, so the suggestion is
-   * built for these exact measurements and lands back in this season.
+   * Hands the current bed and month to the generator, so the suggestion is
+   * built for these exact measurements and lands back in this month.
    */
   function suggestPlan() {
-    navigate(`/autoplan?bed=${bedId}&season=${bed.season}`);
+    navigate(`/autoplan?bed=${bedId}&year=${bed.view.year}&month=${bed.view.month}`);
   }
 
   function openSettings() {
-    setDraft({ name:record.name, width:record.width, depth:record.depth, height:record.height, sun:record.sun, zone:record.zone });
+    setDraft({ name:record.name, width:record.width, depth:record.depth, height:record.height, sun:record.sun, zone:record.zone, filledYear:record.filledYear });
     setSheet('settings');
   }
 
@@ -263,11 +313,12 @@ function Planner({ record, mobile, navigate, toast }) {
     const d = Math.max(20, Math.min(600, Number(draft.depth) || record.depth));
     const h = Math.max(10, Math.min(150, Number(draft.height) || record.height));
     const resized = w !== record.width || d !== record.depth;
-    saveBed(bedId, { name: draft.name.trim() || 'Mein Hochbeet', width:w, depth:d, height:h, sun:draft.sun, zone:draft.zone });
+    const thisYear = new Date().getFullYear();
+    const filledYear = Math.max(1990, Math.min(thisYear + 1, Number(draft.filledYear) || record.filledYear));
+    saveBed(bedId, { name: draft.name.trim() || 'Mein Hochbeet', width:w, depth:d, height:h, sun:draft.sun, zone:draft.zone, filledYear });
     if (resized) {
-      // Plants keep their cm coordinates; anything now outside is pulled back
-      // in rather than the whole plan being thrown away.
-      setTimeout(() => bed.clampToBed(), 0);
+      // Plants keep their cm coordinates; useBed pulls anything now outside
+      // back in once the new dimensions arrive.
       toast({ message:`Beet auf ${w} × ${d} cm geändert — Pflanzen bleiben erhalten.`, tone:'good' });
     } else {
       toast({ message:'Gespeichert', tone:'good', duration:1800 });
@@ -275,18 +326,10 @@ function Planner({ record, mobile, navigate, toast }) {
     setSheet(null);
   }
 
-  function copyToSeason(target) {
-    bed.copySeason(bed.season, target);
-    toast({
-      message:`Bepflanzung nach ${SEASONS.find(s => s.id === target)?.de} kopiert`,
-      action: () => bed.undo(), tone:'good',
-    });
-  }
-
   async function sharePlan() {
     const lines = [
       `${record.name} — ${record.width} × ${record.depth} cm`,
-      `Saison: ${SEASONS.find(s => s.id === bed.season)?.de}`,
+      `Stand: ${monthLabel}`,
       '',
       ...Object.values(bed.cells)
         .filter(v => v && typeof v === 'object')
@@ -311,6 +354,22 @@ function Planner({ record, mobile, navigate, toast }) {
   // ── Reusable panels ──────────────────────────────────────────────────────
   const analysisPanel = (
     <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+      {advice && (
+        <div style={{ padding:14, borderRadius:14, background:advice.phase === 'rich' ? T.goodBg : T.warnBg, border:`1px solid ${advice.phase === 'rich' ? T.goodBorder : T.warnBorder}` }}>
+          <div style={{ ...LABEL, color:advice.phase === 'rich' ? T.good : T.warn, marginBottom:6 }}>Befüllungsjahr {record.filledYear}</div>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, fontWeight:500 }}>{advice.title}</div>
+          <div style={{ fontSize:11.5, color:T.inkDim, marginTop:5, lineHeight:1.55 }}>{advice.text}</div>
+          {feederIssues.length > 0 && (
+            <ul style={{ margin:'8px 0 0', paddingLeft:18, fontSize:11.5, color:T.inkDim, lineHeight:1.55 }}>
+              {feederIssues.map(f => <li key={f.plant.id}><strong>{f.plant.de}</strong>: {f.reason}</li>)}
+            </ul>
+          )}
+          {advice.refill && bed.view.year === new Date().getFullYear() && (
+            <div style={{ marginTop:10 }}><Btn size="sm" onClick={markRefilled}>✓ Heuer aufgefüllt</Btn></div>
+          )}
+        </div>
+      )}
+
       {bed.issues.length === 0 && bed.wins.length === 0 && rotation.warnings.length === 0 && (
         <div style={{ ...card, textAlign:'center', padding:24 }}>
           <div style={{ fontFamily:"'Fraunces',serif", fontSize:32, color:T.green, fontStyle:'italic' }}>~</div>
@@ -336,12 +395,12 @@ function Planner({ record, mobile, navigate, toast }) {
 
       {rotation.warnings.length > 0 && (
         <>
-          <div style={LABEL}>Fruchtfolge über das Jahr</div>
+          <div style={LABEL}>Fruchtfolge {bed.view.year}</div>
           {rotation.warnings.map((w, i) => (
             <div key={i} style={{ padding:14, borderRadius:14, background:T.warnBg, border:`1px solid ${T.warnBorder}` }}>
-              <div style={{ ...LABEL, color:T.warn, marginBottom:6 }}>Fruchtfolge-Hinweis</div>
+              <div style={{ ...LABEL, color:T.warn, marginBottom:6 }}>{w.kind === 'rotation' ? 'Zu früh wieder im Beet' : 'Folgekultur'}</div>
               <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, fontWeight:500 }}>{w.familyDe}</div>
-              <div style={{ fontSize:11.5, color:T.inkDim, marginTop:4 }}>In mehreren Saisons: {w.seasons.join(', ')}.</div>
+              <div style={{ fontSize:11.5, color:T.inkDim, marginTop:4, lineHeight:1.55 }}>{w.text}</div>
               {w.tip && <div style={{ fontSize:11.5, color:T.inkDim, marginTop:5, lineHeight:1.55 }}>{w.tip}</div>}
             </div>
           ))}
@@ -421,7 +480,7 @@ function Planner({ record, mobile, navigate, toast }) {
             style={{ ...field, flex:1, ...MONO }} />
           <Btn variant="primary" disabled={!harvestPlant || !harvestAmount}
             onClick={() => {
-              addHarvest({ bedId, plantId:harvestPlant, season:bed.season, amountKg:harvestAmount });
+              addHarvest({ bedId, plantId:harvestPlant, amountKg:harvestAmount });
               setHarvestAmount('');
               toast({ message:'Ernte eingetragen', tone:'good', duration:1800 });
             }}>Eintragen</Btn>
@@ -465,17 +524,6 @@ function Planner({ record, mobile, navigate, toast }) {
         style={{ ...field, minHeight:160, lineHeight:1.6, fontSize:14 }} />
       <div style={{ ...MONO, fontSize:10, color:T.inkMute, marginTop:6 }}>Wird automatisch gespeichert.</div>
 
-      <div style={{ ...LABEL, margin:'20px 0 8px' }}>Saison übertragen</div>
-      <div style={{ ...card }}>
-        <div style={{ fontSize:12.5, color:T.inkDim, lineHeight:1.55, marginBottom:10 }}>
-          Übernimm die Bepflanzung von <strong>{SEASONS.find(s => s.id === bed.season)?.de}</strong> in eine andere Saison — als Startpunkt für die Fruchtfolge.
-        </div>
-        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-          {SEASONS.filter(s => s.id !== bed.season).map(s => (
-            <Btn key={s.id} size="sm" onClick={() => copyToSeason(s.id)}>→ {s.de}</Btn>
-          ))}
-        </div>
-      </div>
     </div>
   );
 
@@ -497,6 +545,18 @@ function Planner({ record, mobile, navigate, toast }) {
       </div>
       <div style={{ ...card, ...MONO, fontSize:12, color:T.inkDim, textAlign:'center' }}>
         {((Number(draft.width) * Number(draft.depth)) / 10000).toFixed(2)} m² Anbaufläche
+      </div>
+      <div>
+        <div style={{ ...LABEL, marginBottom:6 }}>Befüllt / zuletzt aufgefüllt im Jahr</div>
+        <div style={{ display:'flex', gap:8 }}>
+          <input type="number" inputMode="numeric" value={draft.filledYear}
+            onChange={e => setDraft(d => ({ ...d, filledYear:e.target.value }))}
+            style={{ ...field, ...MONO, flex:1 }} aria-label="Befüllungsjahr" />
+          <Btn onClick={() => setDraft(d => ({ ...d, filledYear:new Date().getFullYear() }))}>Heuer</Btn>
+        </div>
+        <div style={{ fontSize:11.5, color:T.inkMute, marginTop:6, lineHeight:1.5 }}>
+          Bestimmt die Empfehlung Stark-, Mittel- oder Schwachzehrer und wann das Beet aufgefüllt werden sollte.
+        </div>
       </div>
       <div>
         <div style={{ ...LABEL, marginBottom:6 }}>Sonnenstunden pro Tag</div>
@@ -541,28 +601,41 @@ function Planner({ record, mobile, navigate, toast }) {
   );
 
   // ── Shared chrome ────────────────────────────────────────────────────────
-  const seasonRail = (
-    <div className="hscroll" style={{ display:'flex', gap:6 }}>
-      {SEASONS.map(s => {
-        const on = bed.season === s.id;
-        const n = bed.seasonSummary[s.id]?.count || 0;
-        return (
-          <button key={s.id} onClick={() => { bed.setSeason(s.id); bed.setSelectedKey(null); }}
-            aria-pressed={on}
-            style={{
-              padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit',
-              flexShrink:0, cursor:'pointer', minHeight:42, display:'flex', alignItems:'center', gap:7,
-              background:on ? T.green : T.panel, color:on ? 'var(--panel)' : T.ink,
-              border:`1px solid ${on ? 'transparent' : T.border}`,
-            }}>
-            <span aria-hidden="true" style={{ opacity:on ? 1 : 0.6 }}>{s.glyph}</span>
-            {s.de}
-            {n > 0 && (
-              <span style={{ ...MONO, fontSize:9.5, padding:'1px 6px', borderRadius:999, background:on ? 'rgba(255,255,255,0.22)' : T.bg, color:on ? 'var(--panel)' : T.inkMute }}>{n}</span>
-            )}
+  const thisMonth = new Date().getMonth(), thisYear = new Date().getFullYear();
+  const timeRail = (
+    <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <IconBtn size={36} tone="plain" label="Vorheriges Jahr" onClick={() => bed.setView({ ...bed.view, year:bed.view.year - 1 })}>‹</IconBtn>
+        <div style={{ fontFamily:"'Fraunces',serif", fontSize:17, fontWeight:500, minWidth:52, textAlign:'center' }}>{bed.view.year}</div>
+        <IconBtn size={36} tone="plain" label="Nächstes Jahr" onClick={() => bed.setView({ ...bed.view, year:bed.view.year + 1 })}>›</IconBtn>
+        {age && <span style={{ ...MONO, fontSize:10, color:T.inkMute, marginLeft:4 }}>{age}. Beetjahr</span>}
+        {(bed.view.year !== thisYear || bed.view.month !== thisMonth) && (
+          <button onClick={() => bed.setView({ year:thisYear, month:thisMonth })}
+            style={{ marginLeft:'auto', background:'none', border:'none', color:T.green, fontWeight:600, fontSize:12.5, cursor:'pointer', fontFamily:'inherit', minHeight:36 }}>
+            Heute
           </button>
-        );
-      })}
+        )}
+      </div>
+      <div className="hscroll" style={{ display:'flex', gap:6 }}>
+        {MONTHS_DE_SHORT.map((label, m) => {
+          const on = bed.view.month === m;
+          const n = bed.monthCounts[m];
+          const now = m === thisMonth && bed.view.year === thisYear;
+          return (
+            <button key={m} onClick={() => bed.setView({ ...bed.view, month:m })} aria-pressed={on}
+              aria-label={`${MONTHS_DE[m]}${n ? `, ${n} Pflanzen` : ''}`}
+              style={{
+                padding:'7px 11px', borderRadius:12, fontSize:12.5, fontWeight:600, fontFamily:'inherit',
+                flexShrink:0, cursor:'pointer', minHeight:44, minWidth:46, display:'flex', flexDirection:'column', alignItems:'center', gap:2,
+                background:on ? T.green : T.panel, color:on ? 'var(--panel)' : T.ink,
+                border:`1px solid ${on ? 'transparent' : now ? T.green : T.border}`,
+              }}>
+              {label}
+              <span style={{ ...MONO, fontSize:9, opacity:n ? 0.85 : 0.35 }}>{n || '·'}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 
@@ -608,6 +681,7 @@ function Planner({ record, mobile, navigate, toast }) {
       onBlocked={handleBlocked}
       showSun={showSun}
       showConflict
+      upcoming={bed.neighboursInTime.upcoming}
     />
   );
 
@@ -626,9 +700,10 @@ function Planner({ record, mobile, navigate, toast }) {
         <span aria-hidden="true" style={{ width:34, height:34, borderRadius:'50%', flexShrink:0, background:`radial-gradient(circle at 35% 30%, oklch(0.80 0.10 ${selectedPlant.hue}), oklch(0.50 0.15 ${selectedPlant.hue}))`, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Fraunces',serif", fontStyle:'italic' }}>{selectedPlant.glyph[0]}</span>
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:13.5, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{selectedPlant.de}</div>
-          <div style={{ ...MONO, fontSize:9.5, color:T.inkMute, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-            Ziehen = verschieben · {selectedPlant.spacing_cm} cm Abstand
-          </div>
+          <button onClick={() => openDates(bed.selectedKey)}
+            style={{ ...MONO, fontSize:10, color:T.green, background:'none', border:'none', padding:0, cursor:'pointer', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%', textAlign:'left' }}>
+            🗓 {formatRange(selected)} · ändern
+          </button>
         </div>
         <IconBtn size={38} tone="plain" label="Auswahl aufheben" onClick={() => bed.setSelectedKey(null)}>×</IconBtn>
       </div>
@@ -643,7 +718,7 @@ function Planner({ record, mobile, navigate, toast }) {
   );
 
   /**
-   * An empty season is exactly when a generated plan is worth most, so the
+   * An empty month is exactly when a generated plan is worth most, so the
    * offer appears there rather than being buried in a menu.
    */
   const emptySeasonCta = Object.keys(bed.cells).length === 0 && (
@@ -651,7 +726,7 @@ function Planner({ record, mobile, navigate, toast }) {
       <span aria-hidden="true" style={{ fontSize:20, lineHeight:1, flexShrink:0 }}>✦</span>
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ fontSize:13.5, fontWeight:600 }}>
-          {SEASONS.find(sx => sx.id === bed.season)?.de} ist noch leer
+          Im {MONTHS_DE[bed.view.month]} steht noch nichts
         </div>
         <div style={{ fontSize:11.5, color:T.inkDim, lineHeight:1.45 }}>
           Lass dir eine Mischkultur für {record.width} × {record.depth} cm vorschlagen.
@@ -688,7 +763,7 @@ function Planner({ record, mobile, navigate, toast }) {
 
   const toolRow = (
     <div className="hscroll no-print" style={{ display:'flex', gap:6 }}>
-      {/* An empty season already offers this on its own card — one prompt is enough. */}
+      {/* An empty month already offers this on its own card — one prompt is enough. */}
       {!emptySeasonCta && (
         <button onClick={suggestPlan}
           style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42, background:T.terra, color:'var(--panel)', border:'1px solid transparent' }}>
@@ -697,6 +772,7 @@ function Planner({ record, mobile, navigate, toast }) {
       )}
       {[
         { id:'analysis', label:`Analyse${bed.issues.length ? ` · ${bed.issues.length}` : ''}`, tone: bed.issues.length ? 'bad' : null },
+        { id:'timeline', label:'Zeitachse' },
         { id:'care',     label:'Pflege' },
         { id:'harvest',  label:'Ernte' },
         { id:'notes',    label:'Notizen' },
@@ -710,23 +786,50 @@ function Planner({ record, mobile, navigate, toast }) {
             border:`1px solid ${t.tone === 'bad' ? T.badBorder : T.border}`,
           }}>{t.label}</button>
       ))}
+      <button onClick={() => navigate(`/bed/${bedId}/jahresplan`)}
+        style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42, background:T.panel, color:T.ink, border:`1px solid ${T.border}` }}>
+        🗓 Jahresplan
+      </button>
       <button onClick={() => setShowSun(s => !s)} aria-pressed={showSun}
         style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42, background:showSun ? T.ochre : T.panel, color:showSun ? 'var(--panel)' : T.ink, border:`1px solid ${showSun ? 'transparent' : T.border}` }}>
         ☀ Sonne
       </button>
       <button onClick={handleClear}
         style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42, background:T.panel, color:T.inkDim, border:`1px solid ${T.border}` }}>
-        Saison leeren
+        Monat leeren
       </button>
+    </div>
+  );
+
+  const timelinePanel = (
+    <div>
+      <Timeline
+        plantings={bed.yearPlantings}
+        year={bed.view.year}
+        markerDate={bed.onDate}
+        emptyText={`${bed.view.year} ist noch nichts geplant. Wähle oben einen Monat und setze Pflanzen — sie bekommen automatisch passende Daten.`}
+        onPick={(p) => {
+          const d = parseDate(p.start < `${bed.view.year}-01-01` ? `${bed.view.year}-01-01` : p.start);
+          bed.setView({ year:bed.view.year, month:d.getMonth() });
+          bed.setSelectedKey(p.id);
+          openDates(p.id);
+        }}
+      />
+      {bed.yearPlantings.length > 0 && (
+        <div style={{ fontSize:11.5, color:T.inkMute, marginTop:10, lineHeight:1.5 }}>
+          Rote Linie = angezeigter Monat. Tippe einen Balken an, um die Daten zu ändern.
+        </div>
+      )}
     </div>
   );
 
   const sheets = (
     <>
       <Sheet open={sheet === 'picker'} onClose={() => setSheet(null)} title="Pflanze wählen"
-        subtitle={`${SEASONS.find(s => s.id === bed.season)?.de} · ${record.width} × ${record.depth} cm`}>
+        subtitle={`${monthLabel} · ${record.width} × ${record.depth} cm`}>
         <PlantPicker
-          season={bed.season}
+          month={bed.view.month}
+          bedAge={age}
           placedIds={placedIds}
           armedPlant={armedPlant}
           bedHeightCm={record.height}
@@ -738,7 +841,29 @@ function Planner({ record, mobile, navigate, toast }) {
       <Sheet open={sheet === 'analysis'} onClose={() => setSheet(null)} title="Analyse" subtitle="Nachbarschaft & Fruchtfolge">{analysisPanel}</Sheet>
       <Sheet open={sheet === 'care'} onClose={() => setSheet(null)} title="Pflege" subtitle="Aufgaben aus deiner Bepflanzung">{carePanel}</Sheet>
       <Sheet open={sheet === 'harvest'} onClose={() => setSheet(null)} title="Ernte" subtitle={`${harvestTotal.toFixed(1)} kg erfasst`}>{harvestPanel}</Sheet>
-      <Sheet open={sheet === 'notes'} onClose={() => setSheet(null)} title="Notizen & Saison">{notesPanel}</Sheet>
+      <Sheet open={sheet === 'notes'} onClose={() => setSheet(null)} title="Notizen">{notesPanel}</Sheet>
+      <Sheet open={sheet === 'timeline'} onClose={() => setSheet(null)} title={`Zeitachse ${bed.view.year}`} subtitle="Vor-, Haupt- und Nachkultur">{timelinePanel}</Sheet>
+
+      <Sheet open={sheet === 'dates'} onClose={() => setSheet(null)} title={`${plantById(bed.plantings[dateDraft?.key]?.plantId)?.de || 'Pflanzung'} — Zeitraum`}
+        footer={<Btn variant="primary" full size="lg" onClick={saveDates}>Speichern</Btn>}>
+        {dateDraft && (
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            {[['start', 'Im Beet ab'], ['end', 'Im Beet bis']].map(([k, l]) => (
+              <div key={k}>
+                <div style={{ ...LABEL, marginBottom:6 }}>{l}</div>
+                <input type="date" value={dateDraft[k]} onChange={e => setDateDraft(d => ({ ...d, [k]:e.target.value }))}
+                  style={{ ...field, ...MONO }} aria-label={l} />
+              </div>
+            ))}
+            {dateDraft.end >= dateDraft.start && (
+              <div style={{ ...MONO, fontSize:11, color:T.inkMute }}>{daysBetween(dateDraft.start, dateDraft.end) + 1} Tage im Beet</div>
+            )}
+            <div style={{ fontSize:12, color:T.inkDim, lineHeight:1.55 }}>
+              Davor und danach ist der Platz frei für eine Vor- oder Nachkultur — z. B. Spinat bis Mai, dann Paradeiser, dann Vogerlsalat.
+            </div>
+          </div>
+        )}
+      </Sheet>
 
       <Sheet open={sheet === 'settings'} onClose={() => { setSheet(null); setConfirmDelete(false); }} title="Beet-Einstellungen"
         footer={<Btn variant="primary" full size="lg" onClick={saveSettings}>Speichern</Btn>}>
@@ -770,7 +895,7 @@ function Planner({ record, mobile, navigate, toast }) {
         <IconBtn size={40} label="Beet-Einstellungen" onClick={openSettings}>⚙</IconBtn>
       </header>
 
-      <div style={{ padding:'12px 14px 0' }}>{seasonRail}</div>
+      <div style={{ padding:'12px 14px 0' }}>{timeRail}</div>
       <div style={{ padding:'12px 14px 0' }}>{statsRow}</div>
       <div style={{ padding:'14px 14px 0' }}>{canvas}</div>
       {legendRow && <div style={{ padding:'10px 14px 0' }}>{legendRow}</div>}
@@ -793,7 +918,8 @@ function Planner({ record, mobile, navigate, toast }) {
           <LogoLockup size={36} onClick={() => navigate('/dashboard')} />
         </div>
         <PlantPicker
-          season={bed.season}
+          month={bed.view.month}
+          bedAge={age}
           placedIds={placedIds}
           armedPlant={armedPlant}
           bedHeightCm={record.height}
@@ -815,12 +941,12 @@ function Planner({ record, mobile, navigate, toast }) {
             <IconBtn label="Änderung wiederholen" disabled={!bed.canRedo} onClick={bed.redo}>↷</IconBtn>
             <IconBtn label="Sonnenverlauf einblenden" active={showSun} onClick={() => setShowSun(s => !s)}>☀</IconBtn>
             <Btn variant="terra" onClick={suggestPlan}>✦ Vorschlag</Btn>
-            <Btn onClick={() => navigate(`/bed/${bedId}/seasons`)}>🗓 Jahresplan</Btn>
+            <Btn onClick={() => navigate(`/bed/${bedId}/jahresplan`)}>🗓 Jahresplan</Btn>
             <Btn onClick={openSettings}>⚙ Einstellungen</Btn>
           </div>
         </header>
 
-        <div style={{ marginBottom:14 }}>{seasonRail}</div>
+        <div style={{ marginBottom:14 }}>{timeRail}</div>
         <div style={{ marginBottom:16 }}>{statsRow}</div>
         {canvas}
         {legendRow && <div style={{ marginTop:12 }}>{legendRow}</div>}
@@ -840,7 +966,7 @@ function Planner({ record, mobile, navigate, toast }) {
       <aside className="no-print" style={{ borderLeft:`1px solid ${T.border}`, background:T.paper, padding:20, height:'100vh', overflow:'auto', position:'sticky', top:0 }}>
         <DesktopTabs
           bed={bed}
-          panels={{ analysis:analysisPanel, care:carePanel, harvest:harvestPanel, notes:notesPanel }}
+          panels={{ analysis:analysisPanel, timeline:timelinePanel, care:carePanel, harvest:harvestPanel, notes:notesPanel }}
         />
       </aside>
       {sheets}
@@ -852,6 +978,7 @@ function DesktopTabs({ bed, panels }) {
   const [tab, setTab] = useState('analysis');
   const TABS = [
     { id:'analysis', label:`Analyse${bed.issues.length ? ` (${bed.issues.length})` : ''}` },
+    { id:'timeline', label:'Zeit' },
     { id:'care', label:'Pflege' },
     { id:'harvest', label:'Ernte' },
     { id:'notes', label:'Notizen' },

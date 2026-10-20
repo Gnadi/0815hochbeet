@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { LABEL, MONO, T } from '../theme';
-import { PLANTS, SEASONS, plantById } from '../data/plants';
-import { FEEDERS, monthRangeLabel } from '../data/plantDetails';
+import { PLANTS, plantById } from '../data/plants';
+import { FEEDERS, MONTHS_DE, MONTHS_DE_SHORT, monthRangeLabel } from '../data/plantDetails';
 import { GOALS, SKIP_REASONS, generatePlan } from '../utils/planGenerator';
-import { createBed, currentSeason, saveBed } from '../lib/beds';
+import { ageAdvice, bedAge } from '../utils/bedAge';
+import { createBed, genId, saveBed } from '../lib/beds';
+import { defaultRange, mergePlantings, seasonOfMonth, viewDate } from '../lib/timeline';
 import { useBedRecord, useBeds } from '../hooks/useBeds';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { BedCanvas } from '../components/BedCanvas';
@@ -23,14 +25,13 @@ const field = {
  * plan. Leaving a choice out without a word reads as the app ignoring you,
  * which is exactly how the greedy packer used to come across.
  */
-function SkippedNotice({ skipped, season, depthCm, onBack }) {
+function SkippedNotice({ skipped, month, depthCm, onBack }) {
   if (!skipped?.length) return null;
-  const seasonDe = SEASONS.find(x => x.id === season)?.de;
   const groups = [
     {
       reason: SKIP_REASONS.season,
-      title: `Nicht in der ${seasonDe}-Saison`,
-      hint: 'Diese Kulturen wachsen zu einer anderen Jahreszeit. Wechsle die Saison oder wähle sie ab.',
+      title: `Im ${MONTHS_DE[month]} nicht pflanzbar`,
+      hint: 'Für diese Kulturen ist jetzt keine Saat- oder Pflanzzeit. Wähle einen anderen Monat oder wähle sie ab.',
     },
     {
       reason: SKIP_REASONS.depth,
@@ -82,13 +83,15 @@ export default function AutoPlan() {
 
   const [step, setStep] = useState(1);
   const [goal, setGoal] = useState('family');
-  // Arriving from a bed carries that bed's season, so the suggestion replaces
-  // the season the gardener was actually looking at.
-  const [season, setSeason] = useState(() => {
-    const wanted = params.get('season');
-    return SEASONS.some(x => x.id === wanted) ? wanted : currentSeason();
+  // Arriving from a bed carries the month on screen there, so the suggestion
+  // replaces what the gardener was actually looking at.
+  const [month, setMonth] = useState(() => {
+    const m = Number(params.get('month'));
+    return params.get('month') !== null && m >= 0 && m <= 11 ? m : new Date().getMonth();
   });
-  const [picks, setPicks] = useState(() => PLANTS.filter(p => p.tags.includes('anfänger')).map(p => p.id).slice(0, 6));
+  const year = Number(params.get('year')) || new Date().getFullYear();
+  const season = seasonOfMonth(month);
+  const [picks, setPicks] = useState(() => PLANTS.filter(p => p.tags.includes('anfänger') && p.sowMonths.includes(month)).map(p => p.id).slice(0, 6));
   const [dims, setDims] = useState({
     width: targetBed?.width || beds[0]?.width || 120,
     depth: targetBed?.depth || beds[0]?.depth || 80,
@@ -98,12 +101,16 @@ export default function AutoPlan() {
   const [saving, setSaving] = useState(false);
   const [touchedPicks, setTouchedPicks] = useState(false);
 
-  const seasonPlants = useMemo(() => PLANTS.filter(p => p.seasons.includes(season)), [season]);
+  const seasonPlants = useMemo(() => PLANTS.filter(p => p.sowMonths.includes(month)), [month]);
+  const target = beds.find(b => b.id === applyTo);
+  // A new bed is freshly filled; an existing one is as old as it is.
+  const age = target ? bedAge(target, year) : 1;
+  const advice = ageAdvice(age);
 
   const plan = useMemo(() => generatePlan({
     picks, widthCm:Number(dims.width) || 120, depthCm:Number(dims.depth) || 80,
-    heightCm:Number(dims.height) || 80, season, goal,
-  }), [picks, dims, season, goal]);
+    heightCm:Number(dims.height) || 80, season, month, goal, bedAge:age,
+  }), [picks, dims, season, month, goal, age]);
 
   const previewBed = useMemo(() => plan ? {
     cells:plan.cells, plantStatus:{}, bedWidth:Number(dims.width), bedDepth:Number(dims.depth),
@@ -134,23 +141,25 @@ export default function AutoPlan() {
   function accept() {
     if (!plan || !plan.rows.length) return;
     setSaving(true);
+    const added = Object.values(plan.cells).map(c => ({
+      id: genId(), plantId: c.plantId, x: c.x, y: c.y, count: c.count,
+      ...defaultRange(plantById(c.plantId), year, month),
+    }));
     if (applyTo !== 'new') {
-      const target = beds.find(b => b.id === applyTo);
-      const prev = target.seasonCells;
-      saveBed(applyTo, { seasonCells: { ...prev, [season]: plan.cells } });
+      const prev = target.plantings;
+      saveBed(applyTo, { plantings: mergePlantings(prev, added, viewDate(year, month)) });
       toast({
-        message:`Plan in „${target.name}" (${SEASONS.find(s => s.id === season).de}) übernommen`,
+        message:`Plan in „${target.name}" (${MONTHS_DE[month]} ${year}) übernommen`,
         tone:'good',
-        action: () => saveBed(applyTo, { seasonCells: prev }),
+        action: () => saveBed(applyTo, { plantings: prev }),
       });
       navigate(`/bed/${applyTo}`);
       return;
     }
     const bed = createBed({
-      name:`Plan ${new Date().toLocaleDateString('de-DE')}`,
+      name:`Plan ${new Date().toLocaleDateString('de-AT')}`,
       width:Number(dims.width), depth:Number(dims.depth), height:Number(dims.height),
-      season,
-      seasonCells:{ spring:{}, summer:{}, autumn:{}, winter:{}, [season]:plan.cells },
+      plantings: Object.fromEntries(added.map(p => [p.id, p])),
     });
     navigate(`/bed/${bed.id}`);
   }
@@ -158,7 +167,7 @@ export default function AutoPlan() {
   // ── Steps ────────────────────────────────────────────────────────────────
   const step1 = (
     <>
-      <div style={LABEL}>Schritt 1 · Beet &amp; Saison</div>
+      <div style={LABEL}>Schritt 1 · Beet &amp; Monat</div>
       <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:mobile ? 24 : 28, margin:'6px 0 14px', fontWeight:500 }}>
         {targetBed
           ? <>Vorschlag für <em style={{ color:T.green, fontStyle:'italic' }}>{targetBed.name}</em></>
@@ -167,8 +176,8 @@ export default function AutoPlan() {
 
       {applyTo !== 'new' && (
         <div style={{ padding:'11px 13px', borderRadius:12, background:T.warnBg, border:`1px solid ${T.warnBorder}`, fontSize:12, color:T.inkDim, lineHeight:1.5, marginBottom:16 }}>
-          Der Vorschlag ersetzt die bisherige Bepflanzung in der gewählten Saison.
-          Andere Saisons bleiben unberührt, und du kannst den Schritt danach rückgängig machen.
+          Der Vorschlag ersetzt, was im gewählten Monat im Beet steht. Was davor endet
+          oder danach beginnt, bleibt als Vor- und Nachkultur erhalten — und du kannst den Schritt rückgängig machen.
         </div>
       )}
 
@@ -186,15 +195,20 @@ export default function AutoPlan() {
         </>
       )}
 
-      <div style={{ ...LABEL, marginBottom:8 }}>Saison</div>
+      <div style={{ ...LABEL, marginBottom:8 }}>Pflanzmonat {year}</div>
       <div className="hscroll" style={{ display:'flex', gap:6, marginBottom:16 }}>
-        {SEASONS.map(s => (
-          <button key={s.id} onClick={() => setSeason(s.id)} aria-pressed={season === s.id}
-            style={{ padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42,
-              background:season === s.id ? T.green : T.panel, color:season === s.id ? 'var(--panel)' : T.ink,
-              border:`1px solid ${season === s.id ? 'transparent' : T.border}` }}>{s.glyph} {s.de}</button>
+        {MONTHS_DE_SHORT.map((label, m) => (
+          <button key={m} onClick={() => setMonth(m)} aria-pressed={month === m} aria-label={MONTHS_DE[m]}
+            style={{ padding:'9px 13px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit', flexShrink:0, cursor:'pointer', minHeight:42,
+              background:month === m ? T.green : T.panel, color:month === m ? 'var(--panel)' : T.ink,
+              border:`1px solid ${month === m ? 'transparent' : T.border}` }}>{label}</button>
         ))}
       </div>
+      {advice && (
+        <div style={{ padding:'11px 13px', borderRadius:12, background:T.goodBg, border:`1px solid ${T.goodBorder}`, fontSize:12, color:T.inkDim, lineHeight:1.5, marginBottom:16 }}>
+          <strong style={{ color:T.ink }}>{advice.title}.</strong> Der Vorschlag bevorzugt passende Pflanzen.
+        </div>
+      )}
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:12 }}>
         {[['width','Breite'], ['depth','Tiefe'], ['height','Höhe']].map(([k, l]) => (
@@ -235,7 +249,7 @@ export default function AutoPlan() {
       </div>
 
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, marginBottom:8, flexWrap:'wrap' }}>
-        <div style={LABEL}>Pflanzen · {picks.filter(id => seasonPlants.some(p => p.id === id)).length} in Saison</div>
+        <div style={LABEL}>Pflanzen · {picks.filter(id => seasonPlants.some(p => p.id === id)).length} im {MONTHS_DE[month]} pflanzbar</div>
         <div style={{ display:'flex', gap:10 }}>
           {touchedPicks && (
             <button onClick={() => { setPicks(presetFor(goal)); setTouchedPicks(false); }}
@@ -309,7 +323,7 @@ export default function AutoPlan() {
         ))}
       </div>
 
-      <SkippedNotice skipped={plan.skipped} season={season} depthCm={Number(dims.depth)} onBack={() => setStep(2)} />
+      <SkippedNotice skipped={plan.skipped} month={month} depthCm={Number(dims.depth)} onBack={() => setStep(2)} />
       <div style={{ fontSize:12, color:T.inkDim, lineHeight:1.6 }}>
         Hohe Pflanzen stehen hinten, damit sie die niedrigen nicht beschatten. Benachbarte Reihen sind auf gute Mischkultur geprüft.
       </div>
@@ -321,10 +335,9 @@ export default function AutoPlan() {
         Daraus wird noch <em style={{ color:T.terra, fontStyle:'italic' }}>kein Plan</em>
       </h2>
       <div style={{ ...card, marginBottom:14, fontSize:13, color:T.inkDim, lineHeight:1.6 }}>
-        Keine deiner gewählten Pflanzen lässt sich in ein {dims.depth} cm tiefes
-        {' '}{SEASONS.find(x => x.id === season)?.de}-Beet setzen.
+        Keine deiner gewählten Pflanzen lässt sich im {MONTHS_DE[month]} in ein {dims.depth} cm tiefes Beet setzen.
       </div>
-      <SkippedNotice skipped={plan?.skipped || []} season={season} depthCm={Number(dims.depth)} onBack={() => setStep(2)} />
+      <SkippedNotice skipped={plan?.skipped || []} month={month} depthCm={Number(dims.depth)} onBack={() => setStep(2)} />
     </>
   );
 

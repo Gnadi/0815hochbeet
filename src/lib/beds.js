@@ -5,44 +5,72 @@
 // guard could bounce a signed-in user to onboarding because the Firestore beds
 // had not landed in localStorage yet. Everything now goes through one small
 // observable store that mirrors to Firestore when a user is signed in.
+//
+// Sync rules:
+// - Every save bumps `rev` and writes the *whole* bed. Writing only the patch
+//   with `merge: true` deep-merged nested maps in Firestore, so a plant deleted
+//   locally stayed in the remote copy and came back on the next pull.
+// - On pull the higher `rev` wins; on a tie the later `updatedAt`. Both are
+//   set by the client, so the server clock never decides.
+// - Beds synced to an account carry `ownerUid` and leave the device on logout.
+// - Deletes are remembered until the remote delete went through, so a bed
+//   deleted offline does not come back with the next pull.
 
 import { loadFirebase } from '../firebase';
+import { migrateSeasonCells } from './timeline';
+import { remoteWins } from './syncRules';
 
 const INDEX_KEY = 'hb_beds';
+const DELETED_KEY = 'hb_beds_deleted';
+const VIEW_KEY = 'hb_bed_view';
 const bedKey = (id) => `hb_bed_${id}`;
 
 const listeners = new Set();
 let cache = null;
 let syncUid = null;
-let pulled = false;
 const writeTimers = new Map();
 
 export function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-function readIndex() {
-  try { return JSON.parse(localStorage.getItem(INDEX_KEY) || '[]'); } catch { return []; }
+function readJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch { return fallback; }
+}
+function writeJson(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
-function writeIndex(ids) {
-  try { localStorage.setItem(INDEX_KEY, JSON.stringify(ids)); } catch {}
-}
+const readIndex = () => readJson(INDEX_KEY, []);
+const writeIndex = (ids) => writeJson(INDEX_KEY, ids);
+const readDeleted = () => readJson(DELETED_KEY, []);
+const writeDeleted = (ids) => writeJson(DELETED_KEY, ids);
 
 function readBed(id) {
-  try {
-    const raw = localStorage.getItem(bedKey(id));
-    if (!raw) return null;
-    const bed = JSON.parse(raw);
-    return bed && typeof bed === 'object' ? { ...bed, id } : null;
-  } catch { return null; }
+  const bed = readJson(bedKey(id), null);
+  return bed && typeof bed === 'object' ? { ...bed, id } : null;
+}
+
+function storeBed(bed) {
+  writeJson(bedKey(bed.id), bed);
+  const ids = readIndex();
+  if (!ids.includes(bed.id)) writeIndex([...ids, bed.id]);
 }
 
 function readAll() {
   return readIndex()
     .map(readBed)
     .filter(Boolean)
-    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    .map(raw => {
+      const bed = normalizeBed(raw);
+      // Persist a migration once, so planting ids stay stable between reads.
+      if (!raw.plantings) storeBed(bed);
+      return bed;
+    })
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 }
 
 function emit() {
@@ -50,11 +78,20 @@ function emit() {
   listeners.forEach(fn => { try { fn(); } catch {} });
 }
 
-/** Normalises anything we load — old beds predate several fields. */
+/**
+ * Normalises anything we load. Old beds predate several fields; the oldest
+ * kept a single `cells` map, later ones four `seasonCells` layouts. Both are
+ * turned into dated plantings for the year they were last edited.
+ */
 export function normalizeBed(bed) {
-  const seasonCells = bed.seasonCells
-    || (bed.cells && Object.keys(bed.cells).length ? { spring: {}, summer: bed.cells, autumn: {}, winter: {} } : null)
-    || { spring: {}, summer: {}, autumn: {}, winter: {} };
+  let plantings = bed.plantings;
+  if (!plantings || typeof plantings !== 'object') {
+    const legacy = bed.seasonCells
+      || (bed.cells && Object.keys(bed.cells).length ? { summer: bed.cells } : null);
+    const year = new Date(bed.updatedAt || bed.createdAt || Date.now()).getFullYear() || new Date().getFullYear();
+    plantings = legacy ? migrateSeasonCells(legacy, year, genId) : {};
+  }
+  const createdAt = bed.createdAt || '1970-01-01T00:00:00.000Z';
   return {
     id: bed.id,
     name: bed.name || 'Mein Hochbeet',
@@ -65,19 +102,16 @@ export function normalizeBed(bed) {
     sun: bed.sun || '5-7',
     zone: bed.zone || 'zone7',
     notes: bed.notes || '',
-    season: bed.season || currentSeason(),
-    seasonCells: {
-      spring: seasonCells.spring || {},
-      summer: seasonCells.summer || {},
-      autumn: seasonCells.autumn || {},
-      winter: seasonCells.winter || {},
-    },
-    createdAt: bed.createdAt || new Date().toISOString(),
-    updatedAt: bed.updatedAt || new Date().toISOString(),
+    filledYear: Number(bed.filledYear) || Number(createdAt.slice(0, 4)) || new Date().getFullYear(),
+    plantings,
+    rev: Number(bed.rev) || 0,
+    ownerUid: bed.ownerUid || null,
+    createdAt,
+    updatedAt: typeof bed.updatedAt === 'string' ? bed.updatedAt : createdAt,
   };
 }
 
-/** Meteorological season for "today" — a sensible default for a new bed. */
+/** Meteorological season for "today". */
 export function currentSeason(date = new Date()) {
   const m = date.getMonth();
   if (m <= 1 || m === 11) return 'winter';
@@ -91,127 +125,211 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 
+/** Normalised beds; the same array until something changes (safe for useSyncExternalStore). */
 export function getSnapshot() {
   if (cache === null) cache = readAll();
   return cache;
 }
 
 export function getBed(id) {
-  const local = readBed(id);
-  return local ? normalizeBed(local) : null;
+  return getSnapshot().find(b => b.id === id) || null;
 }
 
 export function hasBeds() {
   return getSnapshot().length > 0;
 }
 
-function queueRemoteWrite(id, data) {
+// ── Per-device view (month & year shown in the planner) ──────────────────────
+// Kept out of the bed itself: flipping through months is not an edit and must
+// not bump the revision or trigger a sync.
+export function getBedView(id) {
+  const v = readJson(VIEW_KEY, {})[id];
+  const now = new Date();
+  return v && Number.isInteger(v.year) && Number.isInteger(v.month)
+    ? v : { year: now.getFullYear(), month: now.getMonth() };
+}
+export function setBedView(id, view) {
+  writeJson(VIEW_KEY, { ...readJson(VIEW_KEY, {}), [id]: { year: view.year, month: view.month } });
+}
+
+// ── Remote mirror ────────────────────────────────────────────────────────────
+function remoteDoc(fb, id) {
+  return fb.storeSdk.doc(fb.db, 'users', syncUid, 'beds', id);
+}
+
+async function writeRemote(bed) {
+  const fb = await loadFirebase();
+  if (!fb || !syncUid) return;
+  // No merge: the stored document is exactly the local bed.
+  await fb.storeSdk.setDoc(remoteDoc(fb, bed.id), JSON.parse(JSON.stringify(bed)));
+}
+
+function queueRemoteWrite(id) {
   if (!syncUid) return;
   clearTimeout(writeTimers.get(id));
-  writeTimers.set(id, setTimeout(async () => {
-    const fb = await loadFirebase();
-    if (!fb || !syncUid) return;
-    const { doc, setDoc, serverTimestamp } = fb.storeSdk;
-    setDoc(
-      doc(fb.db, 'users', syncUid, 'beds', id),
-      { ...data, updatedAt: serverTimestamp() },
-      { merge: true },
-    ).catch(() => {});
+  writeTimers.set(id, setTimeout(() => {
+    writeTimers.delete(id);
+    const bed = readBed(id);
+    if (bed) writeRemote(normalizeBed(bed)).catch(() => {});
   }, 700));
 }
 
+/** Sends every pending write right away (before logout). */
+export async function flushRemoteWrites() {
+  const ids = [...writeTimers.keys()];
+  ids.forEach(id => clearTimeout(writeTimers.get(id)));
+  writeTimers.clear();
+  await Promise.all(ids.map(id => {
+    const bed = readBed(id);
+    return bed ? writeRemote(normalizeBed(bed)).catch(() => {}) : null;
+  }));
+}
+
+async function deleteRemote(id) {
+  const fb = await loadFirebase();
+  if (!fb || !syncUid) return false;
+  try {
+    await fb.storeSdk.deleteDoc(remoteDoc(fb, id));
+    writeDeleted(readDeleted().filter(x => x !== id));
+    return true;
+  } catch { return false; }
+}
+
+// ── Mutations ────────────────────────────────────────────────────────────────
 export function createBed(data = {}) {
   const id = data.id || genId();
   const now = new Date().toISOString();
-  const bed = normalizeBed({ ...data, id, createdAt: now, updatedAt: now });
-  try {
-    localStorage.setItem(bedKey(id), JSON.stringify(bed));
-    const ids = readIndex();
-    if (!ids.includes(id)) writeIndex([...ids, id]);
-  } catch {}
+  const bed = normalizeBed({
+    ...data, id, createdAt: now, updatedAt: now, rev: 1,
+    filledYear: data.filledYear || new Date().getFullYear(),
+    plantings: data.plantings || {},
+    ownerUid: syncUid,
+  });
+  storeBed(bed);
   emit();
-  queueRemoteWrite(id, bed);
+  queueRemoteWrite(id);
   return bed;
 }
 
-/** Shallow-merges `patch` into the stored bed and mirrors it remotely. */
+/** Merges `patch` into the stored bed, bumps the revision and mirrors it. */
 export function saveBed(id, patch) {
   const existing = readBed(id);
   if (!existing) return null;
-  const next = { ...existing, ...patch, id, updatedAt: new Date().toISOString() };
-  try {
-    localStorage.setItem(bedKey(id), JSON.stringify(next));
-    const ids = readIndex();
-    if (!ids.includes(id)) writeIndex([...ids, id]);
-  } catch {}
+  const base = normalizeBed(existing);
+  const next = {
+    ...base, ...patch, id,
+    rev: base.rev + 1,
+    ownerUid: base.ownerUid || syncUid,
+    updatedAt: new Date().toISOString(),
+  };
+  storeBed(next);
   emit();
-  queueRemoteWrite(id, patch);
+  queueRemoteWrite(id);
   return next;
 }
 
 export function deleteBed(id) {
-  try {
-    localStorage.removeItem(bedKey(id));
-    writeIndex(readIndex().filter(x => x !== id));
-  } catch {}
+  const owned = readBed(id)?.ownerUid;
+  try { localStorage.removeItem(bedKey(id)); } catch {}
+  writeIndex(readIndex().filter(x => x !== id));
   clearTimeout(writeTimers.get(id));
+  writeTimers.delete(id);
   emit();
-  if (syncUid) {
-    loadFirebase().then(fb => {
-      if (fb && syncUid) fb.storeSdk.deleteDoc(fb.storeSdk.doc(fb.db, 'users', syncUid, 'beds', id)).catch(() => {});
-    });
+  if (owned || syncUid) {
+    writeDeleted([...new Set([...readDeleted(), id])]);
+    deleteRemote(id);
   }
 }
 
 export function duplicateBed(id) {
   const src = getBed(id);
   if (!src) return null;
-  return createBed({ ...src, id: undefined, name: `${src.name} (Kopie)` });
+  const plantings = Object.fromEntries(Object.values(src.plantings).map(p => {
+    const nid = genId();
+    return [nid, { ...p, id: nid }];
+  }));
+  return createBed({ ...src, id: undefined, name: `${src.name} (Kopie)`, plantings, filledYear: src.filledYear });
 }
 
 /**
- * Points the store at a signed-in user. Pulls remote beds once and merges them
- * in — remote-only beds are added, and a remote copy that is newer than the
- * local one wins.
+ * Points the store at a signed-in user (or none). On sign-in: pulls the
+ * account's beds, adopts beds made on this device while signed out, and
+ * pushes whatever is newer locally. On sign-out: sends pending writes and
+ * removes the account's beds from this device.
  */
 export async function setSyncUser(uid) {
+  uid = uid || null;
   if (uid === syncUid) return;
-  syncUid = uid || null;
-  pulled = false;
-  if (!syncUid) return;
+  const previous = syncUid;
+
+  if (!uid) {
+    if (previous) {
+      await flushRemoteWrites();
+      syncUid = null;
+      const keep = readIndex().filter(id => {
+        const bed = readBed(id);
+        if (bed?.ownerUid === previous) { try { localStorage.removeItem(bedKey(id)); } catch {} return false; }
+        return true;
+      });
+      writeIndex(keep);
+      writeDeleted([]);
+      emit();
+    }
+    return;
+  }
+
+  syncUid = uid;
   const fb = await loadFirebase();
-  if (!fb) return;
+  if (!fb || syncUid !== uid) return;
   try {
     const { collection, getDocs } = fb.storeSdk;
-    const snap = await getDocs(collection(fb.db, 'users', syncUid, 'beds'));
-    if (pulled) return;
-    pulled = true;
-    let touched = false;
+    const snap = await getDocs(collection(fb.db, 'users', uid, 'beds'));
+    if (syncUid !== uid) return;
+    const deleted = new Set(readDeleted());
+    const remoteIds = new Set();
+    const toPush = [];
+
     snap.docs.forEach(d => {
-      const remote = normalizeBed({ ...d.data(), id: d.id });
+      remoteIds.add(d.id);
+      if (deleted.has(d.id)) { deleteRemote(d.id); return; }
+      const raw = d.data();
       const local = readBed(d.id);
-      const remoteAt = String(remote.updatedAt?.toDate?.().toISOString?.() ?? remote.updatedAt ?? '');
-      const localAt = String(local?.updatedAt ?? '');
-      if (!local || remoteAt > localAt) {
-        try {
-          localStorage.setItem(bedKey(d.id), JSON.stringify({ ...remote, updatedAt: remoteAt || new Date().toISOString() }));
-          const ids = readIndex();
-          if (!ids.includes(d.id)) writeIndex([...ids, d.id]);
-          touched = true;
-        } catch {}
+      const legacy = raw.rev === undefined;
+      const remote = normalizeBed({
+        ...raw, id: d.id,
+        updatedAt: raw.updatedAt?.toDate ? raw.updatedAt.toDate().toISOString() : raw.updatedAt,
+      });
+      if (remoteWins(legacy ? { ...remote, rev: undefined } : remote, local)) {
+        storeBed({ ...remote, ownerUid: uid });
+      } else if (local) {
+        toPush.push(local.id);
       }
     });
-    if (touched) emit();
+
+    // Local beds the account does not know yet: made while signed out (adopt
+    // them) or created here and never uploaded. Another account's leftovers
+    // are not touched.
+    for (const id of readIndex()) {
+      if (remoteIds.has(id)) continue;
+      const bed = readBed(id);
+      if (!bed || (bed.ownerUid && bed.ownerUid !== uid)) continue;
+      storeBed({ ...normalizeBed(bed), ownerUid: uid });
+      toPush.push(id);
+    }
+    for (const id of deleted) if (!remoteIds.has(id)) writeDeleted(readDeleted().filter(x => x !== id));
+
+    emit();
+    await Promise.all(toPush.map(id => {
+      const bed = readBed(id);
+      return bed ? writeRemote(normalizeBed(bed)).catch(() => {}) : null;
+    }));
   } catch {}
 }
 
-/** Pushes every local bed to the signed-in account (used right after login). */
+/** Pushes every local bed of this account (the "Jetzt sichern" button). */
 export async function pushAllToRemote() {
   if (!syncUid) return;
-  const fb = await loadFirebase();
-  if (!fb) return;
-  const { doc, setDoc, serverTimestamp } = fb.storeSdk;
-  await Promise.all(getSnapshot().map(bed =>
-    setDoc(doc(fb.db, 'users', syncUid, 'beds', bed.id), { ...bed, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {}),
-  ));
+  await Promise.all(getSnapshot()
+    .filter(bed => !bed.ownerUid || bed.ownerUid === syncUid)
+    .map(bed => writeRemote({ ...bed, ownerUid: syncUid }).catch(() => {})));
 }

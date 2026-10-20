@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useBeds } from '../hooks/useBeds';
-import { currentSeason, deleteBed } from '../lib/beds';
+import { deleteBed } from '../lib/beds';
 import { LABEL, MONO, T } from '../theme';
-import { SEASONS, plantById } from '../data/plants';
+import { plantById } from '../data/plants';
+import { MONTHS_DE, MONTHS_DE_SHORT } from '../data/plantDetails';
+import { activeAt, viewDate } from '../lib/timeline';
 import { TabBar } from '../components/TabBar';
 import { BedCard } from '../components/BedCard';
 import { Btn } from '../components/Btn';
@@ -16,11 +18,12 @@ export default function BeetsOverview() {
   const mobile = useBreakpoint();
   const beds = useBeds();
   const toast = useToast();
-  const [season, setSeason] = useState(currentSeason());
+  const year = new Date().getFullYear();
+  const [month, setMonth] = useState(new Date().getMonth());
+  const date = viewDate(year, month);
 
   const totalYield = beds.reduce((s, b) =>
-    s + Object.values(b.seasonCells?.[season] || {})
-      .filter(v => v && typeof v === 'object')
+    s + Object.values(activeAt(b.plantings, date))
       .reduce((n, v) => n + (plantById(v.plantId)?.yield || 0) * (v.count || 1), 0), 0);
   const totalArea = beds.reduce((s, b) => s + (b.width * b.depth) / 10000, 0);
 
@@ -55,17 +58,17 @@ export default function BeetsOverview() {
         </div>
 
         <div className="hscroll" style={{ display:'flex', gap:6, marginBottom:16 }}>
-          {SEASONS.map(s => {
-            const on = season === s.id;
+          {MONTHS_DE_SHORT.map((label, m) => {
+            const on = month === m;
             return (
-              <button key={s.id} onClick={() => setSeason(s.id)} aria-pressed={on}
+              <button key={m} onClick={() => setMonth(m)} aria-pressed={on} aria-label={`${MONTHS_DE[m]} ${year}`}
                 style={{
-                  padding:'9px 15px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit',
-                  flexShrink:0, cursor:'pointer', minHeight:42, display:'flex', alignItems:'center', gap:6,
+                  padding:'9px 13px', borderRadius:999, fontSize:12.5, fontWeight:600, fontFamily:'inherit',
+                  flexShrink:0, cursor:'pointer', minHeight:42,
                   background:on ? T.green : T.panel, color:on ? 'var(--panel)' : T.ink,
                   border:`1px solid ${on ? 'transparent' : T.border}`,
                 }}>
-                <span aria-hidden="true">{s.glyph}</span>{s.de}
+                {label}
               </button>
             );
           })}
@@ -80,7 +83,7 @@ export default function BeetsOverview() {
 
         <div style={{ display:'grid', gridTemplateColumns:mobile ? '1fr' : 'repeat(auto-fill,minmax(320px,1fr))', gap:12 }}>
           {beds.map(bed => (
-            <BedCard key={bed.id} bed={bed} season={season}
+            <BedCard key={bed.id} bed={bed} date={date}
               onOpen={() => navigate(`/bed/${bed.id}`)} onDelete={handleDelete} />
           ))}
           <button onClick={() => navigate('/onboarding')}

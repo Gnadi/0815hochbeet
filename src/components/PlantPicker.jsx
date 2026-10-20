@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { T, MONO } from '../theme';
 import {
-  DIFFICULTY_DE, PLANTS, SEASONS, SUN_ICON, WATER_ICON,
+  DIFFICULTY_DE, PLANTS, SUN_ICON, WATER_ICON,
   pairScore, plantById, searchPlants,
 } from '../data/plants';
-import { monthRangeLabel } from '../data/plantDetails';
+import { FEEDERS, MONTHS_DE, monthRangeLabel } from '../data/plantDetails';
+import { ageAdvice, ageScore } from '../utils/bedAge';
 
 const FAV_KEY = 'hb_fav_plants';
 
@@ -40,15 +41,17 @@ function companionVerdict(plantId, placedIds) {
  * the real sowing calendar, and a marker for anything that clashes with what
  * is already in the bed.
  */
-export function PlantPicker({ season, placedIds = [], armedPlant, onPick, bedHeightCm, compact = false }) {
+export function PlantPicker({ month: viewMonth, bedAge, placedIds = [], armedPlant, onPick, bedHeightCm, compact = false }) {
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('season');
+  const [filter, setFilter] = useState('month');
   const [favs, setFavs] = useState(getFavorites);
   const month = new Date().getMonth();
+  const advice = ageAdvice(bedAge);
 
   const list = useMemo(() => {
     let out = PLANTS;
-    if (filter === 'season') out = out.filter(p => p.seasons.includes(season));
+    // Plants that can go into the bed in the month on screen.
+    if (filter === 'month') out = out.filter(p => p.sowMonths.includes(viewMonth));
     else if (filter === 'now') out = out.filter(p => p.sowMonths.includes(month) || p.precultureMonths.includes(month));
     else if (filter === 'easy') out = out.filter(p => p.difficulty === 1);
     else if (filter === 'fast') out = out.filter(p => p.harvestWeeks > 0 && p.harvestWeeks <= 8);
@@ -60,12 +63,13 @@ export function PlantPicker({ season, placedIds = [], armedPlant, onPick, bedHei
       const va = companionVerdict(a.id, placedIds);
       const vb = companionVerdict(b.id, placedIds);
       const rank = v => (v.tone === 'bad' ? 2 : v.tone === 'good' ? 0 : 1);
-      return rank(va) - rank(vb) || vb.good - va.good || a.de.localeCompare(b.de, 'de');
+      return rank(va) - rank(vb) || vb.good - va.good
+        || ageScore(b, bedAge) - ageScore(a, bedAge) || a.de.localeCompare(b.de, 'de');
     });
-  }, [filter, query, season, placedIds, favs, month]);
+  }, [filter, query, viewMonth, bedAge, placedIds, favs, month]);
 
   const FILTERS = [
-    { id:'season', label: SEASONS.find(s => s.id === season)?.de || 'Saison' },
+    { id:'month',  label: viewMonth !== undefined ? `Im ${MONTHS_DE[viewMonth]}` : 'Diesen Monat' },
     { id:'now',    label:'Jetzt säen' },
     { id:'fits',   label:'Passt dazu' },
     { id:'easy',   label:'Einfach' },
@@ -154,6 +158,11 @@ export function PlantPicker({ season, placedIds = [], armedPlant, onPick, bedHei
                 <span style={{ ...MONO, display:'block', fontSize:9.5, color: p.sowMonths.includes(month) ? T.good : T.inkMute, marginTop:2 }}>
                   Saat {monthRangeLabel(p.sowMonths)}
                 </span>
+                {advice?.avoid.includes(p.feeder) && (
+                  <span style={{ ...MONO, display:'block', fontSize:9.5, color:T.warn, marginTop:2 }}>
+                    ⚠ {FEEDERS[p.feeder].short}zehrer im {advice.age}. Beetjahr
+                  </span>
+                )}
                 {tooDeep && (
                   <span style={{ ...MONO, display:'block', fontSize:9.5, color:T.warn, marginTop:2 }}>
                     ⚠ braucht {p.rootDepth_cm} cm Erde

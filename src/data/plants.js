@@ -1,5 +1,5 @@
 // Plant library — research-based companion planting data for Central Europe
-import { PLANT_DETAILS, FEEDERS } from './plantDetails.js';
+import { PLANT_DETAILS, FEEDERS, HARVEST_SPAN_WEEKS, BOLTS_IN_HEAT } from './plantDetails.js';
 
 export const SNAP_CM = 5;
 // Sources: Gertrud Franck "Mischkulturen im Gemüsegarten", DGG,
@@ -28,6 +28,27 @@ const BASE_PLANTS = [
   { id:"parsley",    de:"Petersilie",   en:"Parsley",      glyph:"Pe", hue:112, spacing_cm:20, sun:"part", water:"med",  seasons:["spring","summer","autumn"],           yield:0.1, sowDepth:0.5,  harvestWeeks:12, family:"Apiaceae",       description:"Zieht Schwebfliegen an, die Blattläuse bekämpfen. Gut neben Tomate.",                                careNotes:"Langsamer Keimer (3–4 Wochen). Beim Keimen regelmäßig gießen." },
   { id:"rucola",     de:"Rucola",       en:"Rocket",       glyph:"Ru", hue:105, spacing_cm:15, sun:"part", water:"med",  seasons:["spring","summer","autumn"],           yield:0.15,sowDepth:0.5,  harvestWeeks:4,  family:"Brassicaceae",   description:"Würzige Salat-Alternative mit pfeffrigem Aroma. Schnellwachsend und robust.",                         careNotes:"Kühlen Standort bevorzugen — bei Hitze schießt er schnell und wird bitter." },
   { id:"chive",      de:"Schnittlauch", en:"Chive",        glyph:"Sn", hue:115, spacing_cm:12, sun:"full", water:"low",  seasons:["spring","summer","autumn","winter"],  yield:0.1, sowDepth:0.5,  harvestWeeks:52, family:"Amaryllidaceae", description:"Mehrjährig. Schöne lila Blüten ziehen Bestäuber an. Sehr robust.",                                   careNotes:"Regelmäßiges Ernten fördert Wachstum. Sehr winterhart und pflegeleicht." },
+  // ── Ergänzt für den österreichischen Hausgarten (Kohl, Rübengewächse, Kürbis, Wintergemüse, Blühpartner)
+  { id:"cabbage",    de:"Weißkraut",    en:"Cabbage",      glyph:"Wk", hue:160, spacing_cm:50, sun:"full", water:"high", seasons:["spring","summer","autumn"],           yield:2.0, sowDepth:1,    harvestWeeks:16, family:"Brassicaceae",   description:"Klassisches Lagerkraut für Sauerkraut und Krautsalat. Starkzehrer, der viel Platz und Kompost braucht.", careNotes:"Kulturschutznetz gegen Kohlweißling und Kohlfliege. Gleichmäßig gießen, sonst platzen die Köpfe." },
+  { id:"kale",       de:"Grünkohl",     en:"Kale",         glyph:"Gk", hue:140, spacing_cm:45, sun:"full", water:"med",  seasons:["summer","autumn","winter"],           yield:0.6, sowDepth:1,    harvestWeeks:16, family:"Brassicaceae",   description:"Sehr winterhart, wird erst nach den ersten Frösten richtig süß. Ernte Blatt für Blatt bis ins Frühjahr.", careNotes:"Von unten nach oben ernten, das Herz stehen lassen. Netz gegen Kohlweißling." },
+  { id:"brussels",   de:"Kohlsprossen", en:"Brussels Sprouts", glyph:"Ks", hue:125, spacing_cm:50, sun:"full", water:"med", seasons:["summer","autumn","winter"],         yield:0.6, sowDepth:1,    harvestWeeks:22, family:"Brassicaceae",   description:"Lange Kultur, Ernte von Oktober bis in den Winter. Frost macht die Röschen milder.", careNotes:"Anhäufeln für Standfestigkeit. Im September die Triebspitze kappen, dann werden die Röschen gleichmäßig." },
+  { id:"broccoli",   de:"Brokkoli",     en:"Broccoli",     glyph:"Bk", hue:150, spacing_cm:45, sun:"full", water:"med",  seasons:["spring","summer","autumn"],           yield:0.5, sowDepth:1,    harvestWeeks:12, family:"Brassicaceae",   description:"Nach dem Haupttrieb bilden sich Seitentriebe, die man wochenlang nachernten kann.", careNotes:"Ernten, solange die Knospen geschlossen sind. Gleichmäßig feucht halten." },
+  { id:"cauliflower",de:"Karfiol",      en:"Cauliflower",  glyph:"Kf", hue:55,  spacing_cm:50, sun:"full", water:"high", seasons:["spring","summer","autumn"],           yield:0.7, sowDepth:1,    harvestWeeks:14, family:"Brassicaceae",   description:"Anspruchsvollster Kohl: Wassermangel oder Hitze lassen die Rose klein und locker bleiben.", careNotes:"Rose mit eigenen Blättern abdecken, damit sie weiß bleibt. Nie austrocknen lassen." },
+  { id:"chard",      de:"Mangold",      en:"Swiss Chard",  glyph:"Mg", hue:330, spacing_cm:30, sun:"part", water:"med",  seasons:["spring","summer","autumn"],           yield:1.0, sowDepth:2,    harvestWeeks:8,  family:"Chenopodiaceae", description:"Robustes Blattgemüse, das von Juni bis zum Frost immer wieder nachwächst. Bunte Stiele sind ein Blickfang.", careNotes:"Äußere Blätter laufend ernten, Herz stehen lassen. Schießt nicht so schnell wie Spinat." },
+  { id:"beetroot",   de:"Rote Rübe",    en:"Beetroot",     glyph:"Rr", hue:340, spacing_cm:10, sun:"full", water:"med",  seasons:["spring","summer","autumn"],           yield:0.4, sowDepth:2,    harvestWeeks:12, family:"Chenopodiaceae", description:"Unkompliziert und gut lagerfähig. Jede „Samenkugel“ enthält mehrere Keimlinge.", careNotes:"Auf 10 cm vereinzeln. Junge Blätter sind als Salat essbar." },
+  { id:"pumpkin",    de:"Kürbis",       en:"Pumpkin",      glyph:"Kü", hue:30,  spacing_cm:80, sun:"full", water:"high", seasons:["summer","autumn"],                    yield:3.0, sowDepth:2,    harvestWeeks:16, family:"Cucurbitaceae",  description:"Hokkaido passt ins Hochbeet: an den Rand setzen und die Ranken über die Kante hängen lassen.", careNotes:"Viel Kompost, großzügig gießen. Früchte auf ein Brett legen. Vor dem ersten Frost ernten und nachreifen lassen." },
+  { id:"polebean",   de:"Stangenbohne", en:"Pole Bean",    glyph:"Sb", hue:120, spacing_cm:20, sun:"full", water:"med",  seasons:["summer"],                             yield:0.9, sowDepth:3,    harvestWeeks:12, family:"Fabaceae",       description:"Kletternde Fisole mit viel Ertrag auf wenig Grundfläche. Bindet Stickstoff.", careNotes:"Stangen oder Schnüre (2–2,5 m) vor der Aussaat setzen. Erst nach den Eisheiligen säen." },
+  { id:"garlic",     de:"Knoblauch",    en:"Garlic",       glyph:"Kn", hue:290, spacing_cm:12, sun:"full", water:"low",  seasons:["spring","summer","autumn","winter"],  yield:0.15,sowDepth:4,    harvestWeeks:36, family:"Amaryllidaceae", description:"Im Herbst gesteckt, im Juli geerntet. Gilt als Pilzschutz für Erdbeeren und Rosen.", careNotes:"Zehen mit der Spitze nach oben stecken. Ernten, wenn ein Drittel des Laubs gelb ist." },
+  { id:"lambslettuce",de:"Vogerlsalat", en:"Lamb's Lettuce", glyph:"Vs", hue:100, spacing_cm:10, sun:"part", water:"low", seasons:["autumn","winter","spring"],          yield:0.1, sowDepth:1,    harvestWeeks:10, family:"Caprifoliaceae", description:"Der Wintersalat schlechthin. Ideale Nachkultur, wenn im Spätsommer Beetfläche frei wird.", careNotes:"Boden nach der Aussaat andrücken. Bei Kahlfrost mit Vlies abdecken." },
+  { id:"celeriac",   de:"Sellerie",     en:"Celeriac",     glyph:"Se", hue:75,  spacing_cm:40, sun:"full", water:"high", seasons:["spring","summer","autumn"],           yield:0.8, sowDepth:0,    harvestWeeks:20, family:"Apiaceae",       description:"Knollensellerie braucht eine lange, gleichmäßig feuchte Kultur. Lichtkeimer.", careNotes:"Flach pflanzen, die Knolle soll aus der Erde schauen. Unter 10 °C nach dem Auspflanzen droht Schossen." },
+  { id:"fennel",     de:"Fenchel",      en:"Fennel",       glyph:"Fe", hue:90,  spacing_cm:30, sun:"full", water:"med",  seasons:["summer","autumn"],                    yield:0.4, sowDepth:1,    harvestWeeks:12, family:"Apiaceae",       description:"Knollenfenchel ab Juni säen — frühe Aussaaten schießen. Ein schwieriger Nachbar für viele Kulturen.", careNotes:"Gleichmäßig feucht halten und leicht anhäufeln, dann wird die Knolle zart." },
+  { id:"parsnip",    de:"Pastinake",    en:"Parsnip",      glyph:"Pk", hue:50,  spacing_cm:15, sun:"full", water:"low",  seasons:["spring","summer","autumn","winter"],  yield:0.5, sowDepth:1.5,  harvestWeeks:24, family:"Apiaceae",       description:"Altes Wintergemüse mit nussig-süßem Geschmack. Kann bis zur Ernte im Beet bleiben.", careNotes:"Nur frisches Saatgut verwenden, keimt langsam. Nach Frost schmeckt sie süßer." },
+  { id:"eggplant",   de:"Melanzani",    en:"Eggplant",     glyph:"Me", hue:285, spacing_cm:50, sun:"full", water:"med",  seasons:["summer","autumn"],                    yield:0.8, sowDepth:0.5,  harvestWeeks:16, family:"Solanaceae",     description:"Noch wärmebedürftiger als Paprika. Im Hochbeet an der sonnigsten, windgeschütztesten Stelle.", careNotes:"Früh vorziehen, nicht vor Mitte Mai pflanzen. Auf 4–6 Früchte je Pflanze begrenzen." },
+  { id:"corn",       de:"Zuckermais",   en:"Sweet Corn",   glyph:"Zm", hue:50,  spacing_cm:35, sun:"full", water:"med",  seasons:["summer","autumn"],                    yield:0.6, sowDepth:4,    harvestWeeks:14, family:"Poaceae",        description:"Windbestäuber — im Block statt in einer einzelnen Reihe pflanzen. Mit Kürbis und Bohne die „Drei Schwestern“.", careNotes:"Hohe Pflanze an den Nordrand. Ernten, wenn die Fäden braun sind und der Kornsaft milchig ist." },
+  { id:"nasturtium", de:"Kapuzinerkresse", en:"Nasturtium", glyph:"Kk", hue:20, spacing_cm:30, sun:"full", water:"low",  seasons:["summer","autumn"],                    yield:0.05,sowDepth:2,    harvestWeeks:8,  family:"Tropaeolaceae",  description:"Essbare Blüten und Blätter. Lockt Blattläuse und Kohlweißling als Fangpflanze weg.", careNotes:"Magerer Boden fördert Blüten statt Blätter. Darf über den Beetrand ranken." },
+  { id:"calendula",  de:"Ringelblume",  en:"Pot Marigold", glyph:"Rb", hue:40,  spacing_cm:25, sun:"full", water:"low",  seasons:["spring","summer","autumn"],           yield:0.0, sowDepth:1,    harvestWeeks:0,  family:"Asteraceae",     description:"Heimische Schutzpflanze: hält Nematoden im Boden zurück und zieht Schwebfliegen an.", careNotes:"Verblühtes abschneiden, dann blüht sie bis zum Frost. Sät sich gern selbst aus." },
+  { id:"borage",     de:"Borretsch",    en:"Borage",       glyph:"Bt", hue:220, spacing_cm:40, sun:"full", water:"med",  seasons:["summer","autumn"],                    yield:0.05,sowDepth:1.5,  harvestWeeks:8,  family:"Boraginaceae",   description:"Bienenmagnet mit blauen, essbaren Blüten. Verbessert die Bestäubung von Gurke, Zucchini und Erdbeere.", careNotes:"Direkt säen, verträgt kein Umpflanzen. Sät sich stark selbst aus." },
+  { id:"thyme",      de:"Thymian",      en:"Thyme",        glyph:"Th", hue:300, spacing_cm:25, sun:"full", water:"low",  seasons:["spring","summer","autumn","winter"],  yield:0.05,sowDepth:0,    harvestWeeks:52, family:"Lamiaceae",      description:"Mehrjähriges Mittelmeerkraut. Der Duft verwirrt den Kohlweißling.", careNotes:"An den trockensten, sonnigsten Rand setzen. Nach der Blüte zurückschneiden, nie ins alte Holz." },
 ];
 
 // Merge the agronomic detail (sowing months, feeder class, root depth …) onto
@@ -35,9 +56,11 @@ const BASE_PLANTS = [
 export const PLANTS = BASE_PLANTS.map(p => ({
   precultureMonths: [], sowMonths: [], harvestMonths: [],
   feeder: 'medium', rootDepth_cm: 30, height_cm: 40,
-  difficulty: 1, frostHardy: false, perennial: false, tags: [],
+  difficulty: 1, frostHardy: false, perennial: false, tags: [], aka: [],
   ...p,
   ...(PLANT_DETAILS[p.id] || {}),
+  harvestSpanWeeks: HARVEST_SPAN_WEEKS[p.id] ?? 3,
+  boltsInHeat: BOLTS_IN_HEAT.includes(p.id),
 }));
 
 export { FEEDERS };
@@ -67,6 +90,26 @@ export const COMPANIONS = {
   parsley: { tomato:1, pepper:1, zucchini:1,                                            lettuce:-1, carrot:-1 },
   rucola:  { lettuce:1, radish:1, spinach:1, carrot:1 },
   chive:   { tomato:1, carrot:1, strawberry:1, parsley:1,                              bean:-1 },
+  cabbage: { celeriac:1, lettuce:1, spinach:1, bean:1, pea:1, dill:1, potato:1, beetroot:1, chard:1, thyme:1, nasturtium:1, calendula:1, strawberry:-1, onion:-1, garlic:-1 },
+  kale:    { celeriac:1, spinach:1, lettuce:1, potato:1, leek:1, pea:1, beetroot:1, thyme:1, strawberry:-1, garlic:-1 },
+  brussels:{ celeriac:1, spinach:1, lettuce:1, leek:1, pea:1, potato:1, nasturtium:1, strawberry:-1, onion:-1, garlic:-1 },
+  broccoli:{ celeriac:1, lettuce:1, bean:1, pea:1, dill:1, potato:1, beetroot:1, chard:1, nasturtium:1, strawberry:-1, onion:-1, garlic:-1 },
+  cauliflower:{ celeriac:1, lettuce:1, bean:1, pea:1, spinach:1, dill:1, beetroot:1, nasturtium:1, strawberry:-1, onion:-1, garlic:-1 },
+  chard:   { bean:1, carrot:1, radish:1, lettuce:1, kohlrabi:1, onion:1,               spinach:-1, beetroot:-1 },
+  beetroot:{ onion:1, garlic:1, dill:1, bean:1, kohlrabi:1, lettuce:1, zucchini:1, cucumber:1, spinach:-1, potato:-1, corn:-1 },
+  pumpkin: { corn:1, polebean:1, nasturtium:1, dill:1, onion:1, marigold:1, borage:1,  potato:-1, cucumber:-1, zucchini:-1, tomato:-1 },
+  polebean:{ corn:1, cucumber:1, lettuce:1, radish:1, celeriac:1, strawberry:1, cabbage:1, onion:-1, garlic:-1, leek:-1, pea:-1, chive:-1, fennel:-1 },
+  garlic:  { strawberry:1, tomato:1, carrot:1, cucumber:1,                             bean:-1, pea:-1 },
+  lambslettuce:{ onion:1, leek:1, strawberry:1, kohlrabi:1, radish:1 },
+  celeriac:{ leek:1, bean:1, tomato:1, cucumber:1, spinach:1,                          lettuce:-1, potato:-1, parsley:-1 },
+  fennel:  { lettuce:1, cucumber:1, pea:1,                                              tomato:-1, bean:-1, kohlrabi:-1, dill:-1, pepper:-1 },
+  parsnip: { onion:1, garlic:1, leek:1, radish:1, lettuce:1,                            carrot:-1 },
+  eggplant:{ bean:1, basil:1, pepper:1, marigold:1, thyme:1,                            potato:-1, fennel:-1 },
+  corn:    { bean:1, cucumber:1, zucchini:1, pea:1, potato:1, lettuce:1,               tomato:-1 },
+  nasturtium:{ tomato:1, cucumber:1, zucchini:1, broccoli:1, bean:1, potato:1, radish:1 },
+  calendula:{ tomato:1, carrot:1, potato:1, bean:1, strawberry:1, lettuce:1 },
+  borage:  { strawberry:1, cucumber:1, zucchini:1, tomato:1, cabbage:1 },
+  thyme:   { cabbage:1, kale:1, tomato:1, strawberry:1, lettuce:1 },
 };
 
 export const SEASONS = [
@@ -103,6 +146,19 @@ export function companionReason(a, b) {
     "cucumber-dill":    "Dill zieht Schlupfwespen an, die Gurkenschädlinge parasitieren.",
     "marigold-tomato":  "Tagetes vertreibt Nematoden und weiße Fliege von Tomaten.",
     "basil-pepper":     "Basilikum schützt Paprika vor Blattläusen — gleicher Effekt wie bei der Tomate.",
+    "cabbage-celeriac": "Sellerieduft hält den Kohlweißling fern — eine der bewährtesten Kohl-Mischkulturen.",
+    "cabbage-thyme":    "Thymianduft stört den Kohlweißling bei der Eiablage.",
+    "cabbage-nasturtium":"Kapuzinerkresse lockt Blattläuse und Kohlweißling als Fangpflanze vom Kohl weg.",
+    "cabbage-strawberry":"Kohl und Erdbeere konkurrieren stark um Nährstoffe — die Erdbeere bleibt klein.",
+    "chard-spinach":    "Beides Gänsefußgewächse: gleiche Schädlinge (Rübenfliege) und Blattflecken.",
+    "beetroot-chard":   "Dieselbe Art (Beta vulgaris): teilen sämtliche Krankheiten und Schädlinge.",
+    "corn-pumpkin":     "Drei Schwestern: Kürbisblätter beschatten den Boden, halten ihn feucht und unkrautfrei.",
+    "corn-polebean":    "Drei Schwestern: Die Stangenbohne rankt am Mais hoch und versorgt ihn mit Stickstoff.",
+    "garlic-strawberry":"Knoblauch schützt Erdbeeren vor Grauschimmel und anderen Pilzkrankheiten.",
+    "eggplant-potato":  "Gleiche Familie (Solanaceae): Kartoffelkäfer und Krautfäule gehen auf die Melanzani über.",
+    "carrot-parsnip":   "Gleiche Familie (Apiaceae): Die Möhrenfliege befällt beide.",
+    "fennel-tomato":    "Fenchel hemmt über Wurzelausscheidungen viele Nachbarn — am besten mit Abstand pflanzen.",
+    "borage-strawberry":"Borretsch lockt Bienen an und verbessert so die Bestäubung der Erdbeeren.",
   };
   return map[key] || null;
 }
@@ -115,8 +171,8 @@ export const WATER_ICON = { high:'💧💧💧', med:'💧💧', low:'💧' };
 export const DIFFICULTY_DE = { 1:'Einfach', 2:'Mittel', 3:'Anspruchsvoll' };
 
 /**
- * Free-text search over the German and English name plus the tag list, so
- * "schnell", "kräuter" or "tomato" all find something.
+ * Free-text search over the German and English name, regional names and the
+ * tag list, so "schnell", "kräuter", "tomato" or "Paradeiser" all find something.
  */
 export function searchPlants(list, query) {
   const q = query.trim().toLowerCase();
@@ -125,6 +181,7 @@ export function searchPlants(list, query) {
     p.de.toLowerCase().includes(q) ||
     p.en.toLowerCase().includes(q) ||
     p.family.toLowerCase().includes(q) ||
+    p.aka.some(a => a.toLowerCase().includes(q)) ||
     p.tags.some(t => t.toLowerCase().includes(q)),
   );
 }

@@ -21,18 +21,14 @@ export function isFirebaseConfigured() {
 
 let pending = null;
 
-/** Resolves to `{ app, auth, db, sdk }`, or `null` when Firebase is unavailable. */
+/** Resolves to `{ app, auth, db, authSdk, storeSdk }`, or `null` when Firebase is unavailable. */
 export function loadFirebase() {
   if (!isFirebaseConfigured()) return Promise.resolve(null);
   pending ||= (async () => {
     try {
-      const [{ initializeApp }, authSdk, storeSdk] = await Promise.all([
-        import('firebase/app'),
-        import('firebase/auth'),
-        import('firebase/firestore'),
-      ]);
-      const app = initializeApp(CONFIG);
-      return { app, auth: authSdk.getAuth(app), db: storeSdk.getFirestore(app), authSdk, storeSdk };
+      const sdk = await import('./firebaseSdk.js');
+      const app = sdk.initializeApp(CONFIG);
+      return { app, auth: sdk.getAuth(app), db: sdk.getFirestore(app), authSdk: sdk, storeSdk: sdk };
     } catch {
       return null;
     }

@@ -100,3 +100,17 @@ test('a selection with nothing plantable still explains itself', () => {
 test('no picks at all yields no plan', () => {
   assert.equal(plan([]), null);
 });
+
+test('with a month, only plants that can go into the bed then are planted', () => {
+  const result = plan(['tomato', 'lettuce', 'garlic'], { month: 4, depthCm: 120 });   // May
+  assert.ok(result.kinds.includes('tomato'));
+  assert.equal(skipReason(result, 'garlic'), SKIP_REASONS.season);
+});
+
+test('the bed age decides between a Starkzehrer and a Schwachzehrer', () => {
+  // 50 cm holds one row of either Weißkraut (50 cm) or Salat (25 cm), not both.
+  const fresh = plan(['cabbage', 'lettuce'], { depthCm: 50, month: 4, bedAge: 1 });
+  const spent = plan(['cabbage', 'lettuce'], { depthCm: 50, month: 4, bedAge: 4 });
+  assert.ok(fresh.kinds.includes('cabbage') && !fresh.kinds.includes('lettuce'), `fresh: ${fresh.kinds}`);
+  assert.ok(spent.kinds.includes('lettuce') && !spent.kinds.includes('cabbage'), `spent: ${spent.kinds}`);
+});

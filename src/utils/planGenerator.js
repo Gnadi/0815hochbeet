@@ -5,6 +5,7 @@
 // test than with a screenshot. See tests/planGenerator.test.mjs.
 
 import { pairScore, plantById } from '../data/plants.js';
+import { ageScore } from './bedAge.js';
 
 /** Circles drawn per row before each one starts standing for several plants. */
 const MAX_PER_BAND = 24;
@@ -64,6 +65,8 @@ function chooseRows(pool, depthCm, scoreOf) {
 
 /**
  * Builds a row-based mixed-culture plan (Reihenmischkultur).
+ * `month` (0–11) limits it to plants that can go into the bed that month;
+ * `bedAge` (Befüllungsjahr) favours the feeder class the bed is ready for.
  *
  * Rows run across the bed, are chosen to honour as much of the selection as
  * the depth allows, then sorted tall-to-short so nothing shades what grows in
@@ -72,7 +75,7 @@ function chooseRows(pool, depthCm, scoreOf) {
  * Anything that could not be planted comes back in `skipped` with a reason, so
  * the screen can say why instead of quietly leaving it out.
  */
-export function generatePlan({ picks, widthCm, depthCm, heightCm, season, goal }) {
+export function generatePlan({ picks, widthCm, depthCm, heightCm, season, month, goal, bedAge = null }) {
   const selected = (picks || []).map(plantById).filter(Boolean);
   if (!selected.length) return null;
 
@@ -80,7 +83,10 @@ export function generatePlan({ picks, widthCm, depthCm, heightCm, season, goal }
   const skipped = [];
   const pool = [];
   for (const p of selected) {
-    if (!p.seasons.includes(season)) skipped.push({ plant: p, reason: SKIP_REASONS.season });
+    // With a month the plan goes into the bed then, so it has to be a planting
+    // month; without one, the plant's seasons decide.
+    const fitsTime = month !== undefined && month !== null ? p.sowMonths.includes(month) : p.seasons.includes(season);
+    if (!fitsTime) skipped.push({ plant: p, reason: SKIP_REASONS.season });
     else if (p.spacing_cm > depthCm) skipped.push({ plant: p, reason: SKIP_REASONS.depth });
     else pool.push(p);
   }
@@ -98,7 +104,8 @@ export function generatePlan({ picks, widthCm, depthCm, heightCm, season, goal }
     goal === 'easy' ? (3 - p.difficulty) * 2 :
     goal === 'kids' ? Math.max(0, 12 - p.harvestWeeks) / 3 :
     0;
-  const scoreOf = p => affinity(p) + goalScore(p);
+  // A fresh bed favours Starkzehrer, a spent one Schwachzehrer (Befüllungsjahr).
+  const scoreOf = p => affinity(p) + goalScore(p) + ageScore(p, bedAge);
 
   const rows = chooseRows(pool, depthCm, scoreOf);
   for (const p of pool) {

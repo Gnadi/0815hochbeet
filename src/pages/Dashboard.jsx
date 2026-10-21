@@ -5,7 +5,8 @@ import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useBeds } from '../hooks/useBeds';
 import { useTodos } from '../hooks/useTodos';
 import { useWeather } from '../hooks/useWeather';
-import { currentSeason, pushAllToRemote } from '../lib/beds';
+import { pushAllToRemote } from '../lib/beds';
+import { activeAt } from '../lib/timeline';
 import { applyTheme, getStoredTheme, LABEL, MONO, T } from '../theme';
 import { monthRangeLabel, MONTHS_DE } from '../data/plantDetails';
 import { getWeatherAdvice } from '../utils/weatherAdvice';
@@ -60,11 +61,11 @@ function TaskRow({ task, onToggle, bedName }) {
 }
 
 export default function Dashboard() {
-  const { user, logout } = useAuth();
+  const { user, logout, syncAvailable } = useAuth();
   const navigate = useNavigate();
   const mobile = useBreakpoint();
   const beds = useBeds();
-  const weather = useWeather();
+  const weather = useWeather({ fetch:true });
   const toast = useToast();
   const { todos, toggleTodo } = useTodos();
   const [showAuth, setShowAuth] = useState(false);
@@ -78,7 +79,6 @@ export default function Dashboard() {
     return () => window.removeEventListener('hb:installable', onInstallable);
   }, []);
 
-  const season = currentSeason();
   const month = new Date().getMonth();
   const todayStr = toDateStr(new Date());
 
@@ -91,18 +91,18 @@ export default function Dashboard() {
 
   const openToday = upcoming.filter(t => t.date <= todayStr && !t.done).length;
 
+  // Only what stands in a bed today matters for frost or heat.
   const plantedIds = useMemo(() => {
     const ids = new Set();
-    beds.forEach(b => Object.values(b.seasonCells || {}).forEach(sc =>
-      Object.values(sc || {}).forEach(v => { if (v?.plantId) ids.add(v.plantId); })));
+    beds.forEach(b => Object.values(activeAt(b.plantings, todayStr)).forEach(v => ids.add(v.plantId)));
     return [...ids];
-  }, [beds]);
+  }, [beds, todayStr]);
 
-  const advice = useMemo(() => getWeatherAdvice(weather.forecast, plantedIds), [weather.forecast, plantedIds]);
+  const advice = useMemo(() => getWeatherAdvice(weather.data, plantedIds), [weather.data, plantedIds]);
   const sowable = useMemo(() => sowableNow(month).slice(0, 8), [month]);
 
   const dateStr = new Intl.DateTimeFormat('de-DE', { weekday:'long', day:'2-digit', month:'long' }).format(new Date());
-  const weatherStr = weather.error || weather.loading ? '' : `${weather.temp}° ${weather.description}`;
+  const weatherStr = weather.temp === null ? '' : `${weather.temp}° ${weather.description}`;
 
   function changeTheme(mode) {
     setTheme(mode);
@@ -200,7 +200,7 @@ export default function Dashboard() {
       </div>
       <div style={{ display:'grid', gridTemplateColumns:mobile ? '1fr' : 'repeat(auto-fill,minmax(300px,1fr))', gap:12 }}>
         {beds.slice(0, mobile ? 2 : 6).map(bed => (
-          <BedCard key={bed.id} bed={bed} season={season} onOpen={() => navigate(`/bed/${bed.id}`)} />
+          <BedCard key={bed.id} bed={bed} onOpen={() => navigate(`/bed/${bed.id}`)} />
         ))}
         <button onClick={() => navigate('/onboarding')}
           style={{ background:'transparent', border:`1.5px dashed ${T.borderHi}`, borderRadius:18, padding:20, cursor:'pointer', minHeight:100, color:T.inkMute, fontSize:13, fontWeight:600, fontFamily:'inherit' }}>
@@ -252,6 +252,12 @@ export default function Dashboard() {
                 <Btn size="sm" variant="quiet" onClick={() => { logout(); setSettingsOpen(false); }}>Abmelden</Btn>
               </div>
             </div>
+          ) : !syncAvailable ? (
+            // Without a Firebase project there is nothing to sign in to — say
+            // so instead of offering a login that can only fail.
+            <div style={{ ...card, fontSize:13, color:T.inkDim, lineHeight:1.55 }}>
+              Diese Installation läuft ohne Cloud-Sync. Deine Beete, Aufgaben und Ernten sind in diesem Browser gespeichert.
+            </div>
           ) : (
             <div style={{ ...card }}>
               <div style={{ fontSize:13, color:T.inkDim, lineHeight:1.55, marginBottom:12 }}>
@@ -265,10 +271,10 @@ export default function Dashboard() {
         <div>
           <div style={{ ...LABEL, marginBottom:8 }}>Wetter</div>
           <div style={{ ...card, fontSize:12.5, color:T.inkDim, lineHeight:1.55 }}>
-            {weather.error === 'no-key' && 'Kein Wetter-API-Schlüssel hinterlegt — Frost- und Gießhinweise sind deaktiviert.'}
-            {weather.error === 'geo-denied' && 'Standortfreigabe abgelehnt. Ohne Standort gibt es keine lokalen Wetterhinweise.'}
-            {weather.error === 'fetch-failed' && 'Wetterdaten konnten nicht geladen werden.'}
-            {!weather.error && !weather.loading && `${weather.city}: ${weather.temp}° ${weather.description}`}
+            {weather.error === 'geo-denied' && !weather.data && 'Standortfreigabe abgelehnt. Ohne Standort gibt es keine lokalen Wetter- und Gießhinweise.'}
+            {weather.error === 'fetch-failed' && (weather.data ? 'Offline — zeige die zuletzt geladenen Wetterdaten. ' : 'Wetterdaten konnten nicht geladen werden.')}
+            {weather.temp !== null && `Am Standort: ${weather.temp}° ${weather.description}. `}
+            {weather.data && 'Gießaufgaben entfallen, wenn es genug geregnet hat (Open-Meteo).'}
             {weather.loading && 'Wetter wird geladen…'}
           </div>
         </div>

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './components/Toast';
-import { seedPlantsToFirestore } from './data/seedPlants';
 import { setSyncUser } from './lib/beds';
 import { pruneAutoDone } from './lib/tasks';
 import { useBeds } from './hooks/useBeds';
@@ -11,7 +10,7 @@ import { LogoMark } from './components/Logo';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import BedPlanner from './pages/BedPlanner';
-import SeasonSwitcher from './pages/SeasonSwitcher';
+import YearPlan from './pages/YearPlan';
 import AutoPlan from './pages/AutoPlan';
 import CalendarPage from './pages/CalendarPage';
 import PlantsPage from './pages/PlantsPage';
@@ -41,7 +40,6 @@ function AppRoutes() {
       await setSyncUser(user?.uid || null);
       if (!cancelled) setSynced(true);
     })();
-    if (user) seedPlantsToFirestore();
     return () => { cancelled = true; };
   }, [user]);
 
@@ -53,7 +51,6 @@ function AppRoutes() {
   // Deliberately a helper that returns an element, not a component defined in
   // render — a fresh component type on every render would remount the whole
   // page and throw away its state on each store update.
-  // eslint-disable-next-line no-unused-vars
   const guard = (element) => (hasBeds ? element : <Navigate to="/onboarding" replace />);
 
   return (
@@ -62,7 +59,8 @@ function AppRoutes() {
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/dashboard" element={guard(<Dashboard />)} />
       <Route path="/bed/:bedId" element={guard(<BedPlanner />)} />
-      <Route path="/bed/:bedId/seasons" element={guard(<SeasonSwitcher />)} />
+      <Route path="/bed/:bedId/jahresplan" element={guard(<YearPlan />)} />
+      <Route path="/bed/:bedId/seasons" element={<Navigate to="../jahresplan" relative="path" replace />} />
       <Route path="/autoplan" element={<AutoPlan />} />
       <Route path="/calendar" element={guard(<CalendarPage />)} />
       <Route path="/plants" element={<PlantsPage />} />

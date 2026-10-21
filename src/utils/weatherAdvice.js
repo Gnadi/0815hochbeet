@@ -1,92 +1,56 @@
-import { plantById } from '../data/plants';
+// Weather hints for what is actually planted. Which plants are affected comes
+// from the plant data (frostHardy, water, boltsInHeat) — the old hand-kept id
+// lists went stale with every plant added to the library.
 
-const FROST_SENSITIVE = new Set(['tomato', 'basil', 'cucumber', 'bean', 'zucchini', 'pepper']);
-const HEAT_SENSITIVE  = new Set(['lettuce', 'spinach', 'rucola', 'radish']);
-const WATER_HUNGRY    = new Set(['tomato', 'cucumber', 'zucchini']);
+import { plantById } from '../data/plants.js';
+import { toDateStr } from '../lib/timeline.js';
 
-export function getWeatherAdvice(forecast, plantedIds = []) {
-  if (!forecast?.list?.length) return [];
-  const planted = new Set(plantedIds);
+const CARD = {
+  frost: { color:'#3B82F6', bg:'rgba(59,130,246,0.08)', border:'rgba(59,130,246,0.25)', icon:'❄', title:'Frostgefahr' },
+  rain:  { color:'#0EA5E9', bg:'rgba(14,165,233,0.08)', border:'rgba(14,165,233,0.25)', icon:'🌧', title:'Regen kommt' },
+  heat:  { color:'#F59E0B', bg:'rgba(245,158,11,0.08)', border:'rgba(245,158,11,0.25)', icon:'☀', title:'Hitzestress' },
+  water: { color:'#3E5C30', bg:'rgba(62,92,48,0.08)', border:'rgba(62,92,48,0.25)', icon:'💧', title:'Gießen empfohlen' },
+  sow:   { color:'#3E5C30', bg:'rgba(62,92,48,0.08)', border:'rgba(62,92,48,0.25)', icon:'✦', title:'Gutes Pflanzwetter' },
+};
+
+/** `weather` is the normalised store data (see lib/weather.js). */
+export function getWeatherAdvice(weather, plantedIds = [], now = new Date()) {
+  const hours = (weather?.hourly || []).filter(h => new Date(h.time) >= new Date(now.getTime() - 3600000));
+  if (!hours.length) return [];
+  const plants = plantedIds.map(plantById).filter(Boolean);
+  const names = list => list.map(p => p.de).join(', ');
+  const next36 = hours.slice(0, 36);
+  const next24 = hours.slice(0, 24);
   const advice = [];
-  const next36h = forecast.list.slice(0, 12);
-  const next24h = forecast.list.slice(0, 8);
 
-  // Frost warning
-  const minTemp = Math.min(...next36h.map(p => p.main.temp_min ?? p.main.temp));
-  if (minTemp < 3) {
-    const affected = [...planted].filter(id => FROST_SENSITIVE.has(id)).map(id => plantById(id)?.de || id);
-    if (affected.length > 0) {
-      advice.push({
-        type: 'frost',
-        color: '#3B82F6',
-        bg: 'rgba(59,130,246,0.08)',
-        border: 'rgba(59,130,246,0.25)',
-        icon: '❄',
-        title: 'Frostgefahr',
-        text: `Min. ${Math.round(minTemp)}°C erwartet. Schütze: ${affected.join(', ')}.`,
-      });
-    }
+  const minTemp = Math.min(...next36.map(h => h.temp ?? 99));
+  const tender = plants.filter(p => !p.frostHardy);
+  if (minTemp < 3 && tender.length) {
+    advice.push({ type:'frost', ...CARD.frost, text:`Min. ${Math.round(minTemp)} °C erwartet. Schütze: ${names(tender)}.` });
   }
 
-  // Rain — skip watering
-  const totalRain = next24h.reduce((s, p) => s + (p.rain?.['3h'] || 0), 0);
-  if (totalRain > 5) {
-    advice.push({
-      type: 'rain',
-      color: '#0EA5E9',
-      bg: 'rgba(14,165,233,0.08)',
-      border: 'rgba(14,165,233,0.25)',
-      icon: '🌧',
-      title: 'Regen kommt',
-      text: `~${Math.round(totalRain)} mm in 24 h. Wässern heute auslassen.`,
-    });
+  const rain24 = next24.reduce((s, h) => s + (h.rain || 0), 0);
+  if (rain24 > 5) {
+    advice.push({ type:'rain', ...CARD.rain, text:`~${Math.round(rain24)} mm in 24 h. Gießen heute auslassen.` });
   }
 
-  // Heat stress for shade plants
-  const maxTemp = Math.max(...next24h.map(p => p.main.temp_max ?? p.main.temp));
-  if (maxTemp > 28) {
-    const affected = [...planted].filter(id => HEAT_SENSITIVE.has(id)).map(id => plantById(id)?.de || id);
-    if (affected.length > 0) {
-      advice.push({
-        type: 'heat',
-        color: '#F59E0B',
-        bg: 'rgba(245,158,11,0.08)',
-        border: 'rgba(245,158,11,0.25)',
-        icon: '☀',
-        title: 'Hitzestress',
-        text: `Bis ${Math.round(maxTemp)}°C erwartet. ${affected.join(', ')} beschatten oder extra gießen.`,
-      });
-    }
+  const maxTemp = Math.max(...next24.map(h => h.temp ?? -99));
+  const bolting = plants.filter(p => p.boltsInHeat);
+  if (maxTemp > 28 && bolting.length) {
+    advice.push({ type:'heat', ...CARD.heat, text:`Bis ${Math.round(maxTemp)} °C erwartet. ${names(bolting)} beschatten oder extra gießen.` });
   }
 
-  // Dry spell — water reminder for thirsty plants
-  if (totalRain < 1) {
-    const thirsty = [...planted].filter(id => WATER_HUNGRY.has(id)).map(id => plantById(id)?.de || id);
-    if (thirsty.length > 0 && maxTemp > 20) {
-      advice.push({
-        type: 'water',
-        color: '#3E5C30',
-        bg: 'rgba(62,92,48,0.08)',
-        border: 'rgba(62,92,48,0.25)',
-        icon: '💧',
-        title: 'Gießen empfohlen',
-        text: `Kein Regen in Sicht. ${thirsty.join(', ')} brauchen heute Wasser.`,
-      });
-    }
+  const today = toDateStr(now);
+  const yesterday = toDateStr(new Date(now.getTime() - 86400000));
+  const pastRain = (weather.daily?.[today]?.rain || 0) + (weather.daily?.[yesterday]?.rain || 0);
+  const thirsty = plants.filter(p => p.water === 'high');
+  if (rain24 < 1 && pastRain < 1 && maxTemp > 20 && thirsty.length) {
+    advice.push({ type:'water', ...CARD.water, text:`Kein Regen in Sicht. ${names(thirsty)} brauchen heute Wasser.` });
   }
 
-  // Good conditions for sowing / transplanting
-  const avgTemp = next24h.reduce((s, p) => s + p.main.temp, 0) / next24h.length;
-  if (avgTemp >= 14 && avgTemp <= 24 && totalRain < 3 && minTemp > 5) {
-    advice.push({
-      type: 'sow',
-      color: '#3E5C30',
-      bg: 'rgba(62,92,48,0.08)',
-      border: 'rgba(62,92,48,0.25)',
-      icon: '✦',
-      title: 'Gutes Pflanztag-Wetter',
-      text: 'Mild und trocken — ideale Bedingungen zum Aussäen und Umpflanzen.',
-    });
+  const avg = next24.reduce((s, h) => s + (h.temp ?? 0), 0) / next24.length;
+  if (avg >= 14 && avg <= 24 && rain24 < 3 && minTemp > 5) {
+    advice.push({ type:'sow', ...CARD.sow, text:'Mild und trocken — ideale Bedingungen zum Aussäen und Umpflanzen.' });
   }
 
   return advice.slice(0, 3);

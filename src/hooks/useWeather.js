@@ -1,32 +1,20 @@
-import { useState, useEffect } from 'react';
-const API_KEY = import.meta.env.VITE_OPENWEATHER_API_KEY;
-const WEATHER_DE = {
-  'clear sky':'Sonnig','few clouds':'Leicht bewölkt','scattered clouds':'Bewölkt',
-  'broken clouds':'Stark bewölkt','shower rain':'Schauer','rain':'Regen',
-  'thunderstorm':'Gewitter','snow':'Schnee','mist':'Nebel','overcast clouds':'Bedeckt',
-  'light rain':'Leichter Regen','moderate rain':'Mäßiger Regen',
-};
-export function useWeather() {
-  const [state, setState] = useState({ temp:null, description:'', icon:'', city:'', forecast:null, loading:true, error:null });
-  useEffect(() => {
-    if (!API_KEY || API_KEY === 'placeholder' || !navigator.geolocation) {
-      setState(s=>({...s,loading:false,error:'no-key'}));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(async pos => {
-      try {
-        const { latitude: lat, longitude: lon } = pos.coords;
-        const base = `lat=${lat}&lon=${lon}&units=metric&appid=${API_KEY}`;
-        const [res, forecastRes] = await Promise.all([
-          fetch(`https://api.openweathermap.org/data/2.5/weather?${base}`),
-          fetch(`https://api.openweathermap.org/data/2.5/forecast?${base}&cnt=16`),
-        ]);
-        const d = await res.json();
-        const forecast = await forecastRes.json();
-        const desc = d.weather?.[0]?.description || '';
-        setState({ temp:Math.round(d.main?.temp), description:WEATHER_DE[desc]||desc, icon:d.weather?.[0]?.icon, city:d.name, forecast, loading:false, error:null });
-      } catch { setState(s=>({...s,loading:false,error:'fetch-failed'})); }
-    }, () => setState(s=>({...s,loading:false,error:'geo-denied'})));
-  }, []);
-  return state;
+import { useEffect, useSyncExternalStore } from 'react';
+import { describeCode, getWeatherSnapshot, refreshWeather, subscribeWeather } from '../lib/weather';
+
+/**
+ * Current weather plus the cached history. `fetch: true` refreshes it when the
+ * cache is older than an hour — screens that only read it (the task list)
+ * leave that to the dashboard.
+ */
+export function useWeather({ fetch = false } = {}) {
+  const snap = useSyncExternalStore(subscribeWeather, getWeatherSnapshot, getWeatherSnapshot);
+  useEffect(() => { if (fetch) refreshWeather(); }, [fetch]);
+  const data = snap.data;
+  return {
+    data,
+    loading: snap.loading && !data,
+    error: snap.error,
+    temp: data?.current?.temp != null ? Math.round(data.current.temp) : null,
+    description: describeCode(data?.current?.code),
+  };
 }

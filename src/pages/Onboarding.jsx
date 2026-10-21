@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useBeds } from '../hooks/useBeds';
-import { createBed, currentSeason } from '../lib/beds';
+import { createBed } from '../lib/beds';
 import { LABEL, MONO, T } from '../theme';
 import { AuthModal } from '../components/AuthModal';
 import { Btn } from '../components/Btn';
@@ -24,7 +24,7 @@ const field = {
 };
 
 export default function Onboarding() {
-  const { user } = useAuth();
+  const { user, syncAvailable } = useAuth();
   const navigate = useNavigate();
   const mobile = useBreakpoint();
   const beds = useBeds();
@@ -34,6 +34,8 @@ export default function Onboarding() {
   const [dims, setDims] = useState({ width:120, depth:80, height:80 });
   const [sun, setSun] = useState('5-7');
   const [zone, setZone] = useState('zone7');
+  const thisYear = new Date().getFullYear();
+  const [filledYear, setFilledYear] = useState(thisYear);
   const [showAuth, setShowAuth] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -49,7 +51,7 @@ export default function Onboarding() {
       width: Math.max(20, Number(dims.width) || 120),
       depth: Math.max(20, Number(dims.depth) || 80),
       height: Math.max(10, Number(dims.height) || 80),
-      sun, zone, season: currentSeason(),
+      sun, zone, filledYear,
     });
     navigate(then === 'autoplan' ? `/autoplan?bed=${bed.id}` : `/bed/${bed.id}`);
   }
@@ -132,6 +134,21 @@ export default function Onboarding() {
         <option value="zone5">Alpen · Zone 5–6</option>
       </select>
 
+      <div style={{ ...LABEL, margin:'18px 0 8px' }}>Wann wurde das Beet befüllt?</div>
+      <div style={{ display:'flex', gap:6 }}>
+        {[thisYear, thisYear - 1, thisYear - 2, thisYear - 3].map((y, i) => (
+          <button key={y} onClick={() => setFilledYear(y)} aria-pressed={filledYear === y}
+            style={{ flex:1, minHeight:50, borderRadius:14, cursor:'pointer', fontWeight:700, fontFamily:'inherit', fontSize:13,
+              background:filledYear === y ? T.green : T.panel, color:filledYear === y ? 'var(--panel)' : T.ink,
+              border:`1px solid ${filledYear === y ? 'transparent' : T.border}` }}>
+            {i === 0 ? 'Heuer' : i === 3 ? `${y} o. früher` : y}
+          </button>
+        ))}
+      </div>
+      <p style={{ fontSize:12, color:T.inkMute, marginTop:6, lineHeight:1.5 }}>
+        Frisch befüllte Hochbeete sind die ersten zwei Jahre ideal für Starkzehrer, ab dem dritten für Schwachzehrer.
+      </p>
+
       <div style={{ marginTop:20, display:'flex', flexDirection:'column', gap:8 }}>
         <Btn variant="primary" size="lg" full loading={saving} onClick={() => finish('planner')}>Beet anlegen &amp; planen</Btn>
         <Btn size="lg" full disabled={saving} onClick={() => finish('autoplan')}>✦ Beet anlegen &amp; Vorschlag generieren</Btn>
@@ -201,7 +218,7 @@ export default function Onboarding() {
         </div>
       )}
 
-      {!user && (
+      {!user && syncAvailable && (
         <div style={{ marginTop:16, textAlign:'center' }}>
           <button onClick={() => setShowAuth(true)}
             style={{ background:'none', border:'none', color:T.green, cursor:'pointer', fontSize:12.5, fontFamily:'inherit', textDecoration:'underline', minHeight:44, padding:'0 8px' }}>

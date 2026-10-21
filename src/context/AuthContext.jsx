@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { isFirebaseConfigured, loadFirebase } from '../firebase';
+import { flushRemoteWrites } from '../lib/beds';
 
 const Ctx = createContext(null);
 
@@ -35,6 +36,9 @@ export function AuthProvider({ children }) {
 
   async function logout() {
     const fb = await loadFirebase();
+    // Pending bed edits have to reach the account before the session ends —
+    // the beds leave this device on sign-out.
+    await flushRemoteWrites();
     if (fb) await fb.authSdk.signOut(fb.auth);
   }
 

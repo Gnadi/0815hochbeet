@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { MONO, T } from '../theme';
-import { SEASONS, plantById } from '../data/plants';
+import { plantById } from '../data/plants';
+import { MONTHS_DE } from '../data/plantDetails';
+import { activeAt, parseDate, toDateStr } from '../lib/timeline';
+import { bedAge } from '../utils/bedAge';
 import { getRotationAnalysis } from '../utils/rotationAdvice';
 import { IconBtn, TrashIcon } from './Btn';
 
-/** True-to-scale thumbnail of a bed — the old 8×4 mock grid told you nothing. */
-export function BedMiniMap({ bed, season, height = 88 }) {
+/** True-to-scale thumbnail of what stands in the bed on `date`. */
+export function BedMiniMap({ bed, date, height = 88 }) {
   const bw = bed.width || 120;
   const bh = bed.depth || 80;
-  const cells = bed.seasonCells?.[season] || {};
-  const items = Object.values(cells).filter(v => v && typeof v === 'object');
+  const items = Object.values(activeAt(bed.plantings, date));
 
   return (
     <svg
@@ -35,9 +37,8 @@ export function BedMiniMap({ bed, season, height = 88 }) {
   );
 }
 
-function stats(bed, season) {
-  const cells = bed.seasonCells?.[season] || {};
-  const items = Object.values(cells).filter(v => v && typeof v === 'object');
+function stats(bed, date) {
+  const items = Object.values(activeAt(bed.plantings, date));
   const count = items.reduce((s, v) => s + (v.count || 1), 0);
   const areaCm = items.reduce((s, v) => {
     const p = plantById(v.plantId);
@@ -49,12 +50,13 @@ function stats(bed, season) {
   return { count, coverage, kinds, yieldKg };
 }
 
-export function BedCard({ bed, season, onOpen, onDelete }) {
+export function BedCard({ bed, date = toDateStr(new Date()), onOpen, onDelete }) {
   const [confirm, setConfirm] = useState(false);
-  const s = stats(bed, season);
-  const rotation = getRotationAnalysis(bed.seasonCells || {});
-  const planted = Object.values(bed.seasonCells || {}).some(sc => Object.keys(sc || {}).length > 0);
-  const seasonLabel = SEASONS.find(x => x.id === season)?.de;
+  const d = parseDate(date);
+  const s = stats(bed, date);
+  const rotation = getRotationAnalysis(bed.plantings, d.getFullYear());
+  const planted = Object.keys(bed.plantings || {}).length > 0;
+  const age = bedAge(bed, d.getFullYear());
 
   return (
     <div style={{
@@ -69,7 +71,7 @@ export function BedCard({ bed, season, onOpen, onDelete }) {
           <div style={{ minWidth:0 }}>
             <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:19, margin:0, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{bed.name}</h3>
             <div style={{ ...MONO, fontSize:10, color:T.inkMute, marginTop:3 }}>
-              {bed.width} × {bed.depth} cm · {seasonLabel}
+              {bed.width} × {bed.depth} cm · {MONTHS_DE[d.getMonth()]}{age ? ` · ${age}. Beetjahr` : ''}
             </div>
           </div>
           <div style={{
@@ -82,7 +84,7 @@ export function BedCard({ bed, season, onOpen, onDelete }) {
           }}>{s.coverage}%</div>
         </div>
 
-        <BedMiniMap bed={bed} season={season} />
+        <BedMiniMap bed={bed} date={date} />
 
         <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:12, flexWrap:'wrap' }}>
           <div style={{ display:'flex' }}>

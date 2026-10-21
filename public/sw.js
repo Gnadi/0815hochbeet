@@ -3,7 +3,7 @@
 // precached on install, navigations fall back to the cached shell, and
 // everything the gardener types lives in localStorage anyway.
 
-const VERSION = 'hb-v2';
+const VERSION = 'hb-v3';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 const OFFLINE_URLS = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/logo.png', '/logo-mark.png', '/favicon-64.png'];
@@ -53,6 +53,6 @@ self.addEventListener('fetch', (event) => {
         caches.open(RUNTIME).then(c => c.put(request, copy));
       }
       return res;
-    }).catch(() => hit)),
+    }).catch(() => Response.error())),
   );
 });
